@@ -23,6 +23,47 @@ class Development(Config):
     WEB_PORT = 서버 포트 번호
 ```
 
+## Ollama 및 Gemma 3:4B 설치 가이드
+
+### 1. Ollama 설치
+
+**Windows:**
+```bash
+# 1. Ollama 공식 사이트에서 Windows 설치 파일 다운로드
+# https://ollama.ai/download/windows
+
+# 2. 다운로드한 .exe 파일 실행하여 설치
+
+# 3. 설치 완료 후 명령 프롬프트/PowerShell에서 확인
+ollama --version
+```
+
+**macOS:**
+```bash
+# 1. Homebrew를 사용한 설치
+brew install ollama
+
+# 2. 또는 공식 사이트에서 .dmg 파일 다운로드
+# https://ollama.ai/download/mac
+```
+
+
+### 2. Gemma3 4B 모델 설치
+
+```bash
+# Ollama 서비스 시작
+ollama serve
+
+# 새 터미널에서 Gemma 3 4B 모델 다운로드 및 설치
+ollama pull gemma3:4b
+
+# 설치 확인
+ollama list
+
+```
+
+
+
 ## 실행법
 
 ```sh
