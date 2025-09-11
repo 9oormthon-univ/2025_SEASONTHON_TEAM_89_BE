@@ -39,7 +39,7 @@ async def check_fraud(data: ChatRequest):
     
     res: ChatResponse = None
     
-    # 매 초마다 확인, 최대 20초 대기
+    # 0.01 초마다 확인, 최대 20초 대기
     while (datetime.datetime.now() - start_time).seconds < 20:
         response = CheckFraudResultDict().get(data.message)
         if response is False:
@@ -47,7 +47,7 @@ async def check_fraud(data: ChatRequest):
             break
         if response is not None:
             break
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.01)
     
     res = ChatResponse(result=response)
     
