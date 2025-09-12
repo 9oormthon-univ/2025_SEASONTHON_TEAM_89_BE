@@ -53,7 +53,7 @@ class FamilyGroupService:
         
         # 임시 그룹 데이터 저장 (아직 완성되지 않은 상태)
         pending_group_data = {
-            #"group_name": request.group_name,
+            # "group_name": request.group_name,
             "creator_id": request.user_id,
             "creator_name": request.user_name,
             "members": {
@@ -78,7 +78,7 @@ class FamilyGroupService:
         
         return FamilyGroupCreateResponse(
             group_id=f"pending_{join_code}",  # 임시 ID
-            #group_name=request.group_name,
+            # group_name=request.group_name,
             join_code=join_code,
             creator_id=request.user_id,
             created_at=created_at
@@ -197,6 +197,12 @@ class FamilyGroupService:
         pending_group = self.pending_groups[join_code]
         joined_at = datetime.now()
         
+        if pending_group["status"] != "pending":
+            raise ValueError("GROUP_ALREADY_COMPLETED_OR_EXPIRED")
+        
+        if request.user_id in pending_group["members"]:
+            raise ValueError("USER_ALREADY_IN_PENDING_GROUP")
+
         # 대기 중인 그룹에 멤버 추가
         pending_group["members"][request.user_id] = {
             "user_id": request.user_id,
@@ -229,6 +235,9 @@ class FamilyGroupService:
         if pending_group["creator_id"] != user_id:
             raise ValueError("NOT_GROUP_CREATOR")
         
+        if pending_group["status"] != "pending":
+            raise ValueError("GROUP_ALREADY_COMPLETED_OR_EXPIRED")
+        
         # 실제 그룹 생성
         group_id = self._generate_group_id()
         group_data = {
@@ -237,7 +246,8 @@ class FamilyGroupService:
             "creator_id": pending_group["creator_id"],
             "creator_name": pending_group["creator_name"],
             "members": pending_group["members"],
-            "created_at": pending_group["created_at"]
+            "created_at": pending_group["created_at"],
+            "status": "completed"
         }
         
         # 정식 그룹으로 이동
@@ -387,6 +397,53 @@ class FamilyGroupService:
                 }
         
         return None
+    
+    def cancel_group_creation(self, creator_id: str) -> dict:
+        """생성중 그룹 취소 (생성자만 가능) | 대기 중인 모든 멤버 추방 후 그룹 삭제"""
+        if creator_id not in self.pending_codes:
+            raise ValueError("NO_PENDING_GROUP")
+        
+        join_code = self.pending_codes[creator_id]
+        pending_group = self.pending_groups[join_code]
+        
+        if pending_group["creator_id"] != creator_id:
+            raise ValueError("NOT_GROUP_CREATOR")
+        
+        # 대기 중인 모든 멤버 추방 정보 수집
+        kicked_members = []
+        if join_code in self.waiting_users:
+            for member_id in self.waiting_users[join_code]:
+                if member_id in pending_group["members"]:
+                    member_info = pending_group["members"][member_id]
+                    kicked_members.append({
+                        "user_id": member_id,
+                        "user_name": member_info["user_name"],
+                        "joined_at": member_info["joined_at"].isoformat()
+                    })
+        
+        # 타이머 취소
+        if join_code in self.group_timers:
+            self.group_timers[join_code].cancel()
+            del self.group_timers[join_code]
+        
+        # 대기 상태 완전 정리\
+        total_kicked = len(kicked_members)
+        
+        # 모든 관련 데이터 삭제
+        del self.pending_groups[join_code]
+        del self.pending_codes[creator_id]
+        if join_code in self.waiting_users:
+            del self.waiting_users[join_code]
+        
+        return {
+            "success": True,
+            "message": f"그룹 생성이 취소되었습니다.",
+            "join_code": join_code,
+            "kicked_members": kicked_members,
+            "total_kicked_members": total_kicked,
+            "cancelled_at": datetime.now().isoformat(),
+            "cancelled_by": creator_id
+        }
 
 # 싱글톤 서비스 인스턴스
 family_group_service = FamilyGroupService()

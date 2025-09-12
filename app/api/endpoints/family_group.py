@@ -309,3 +309,38 @@ async def get_user_group_status(user_id: str):
         "status": "none",
         "message": "그룹에 속해있지 않습니다"
     }
+
+@router.delete(
+    "/cancel/{creator_id}",
+    status_code=status.HTTP_200_OK,
+    summary="생성중 그룹 취소",
+    description="생성 중인 그룹을 취소하고 대기 중인 모든 멤버를 추방합니다 (생성자 ID로 요청)"
+)
+async def cancel_group_creation(creator_id: str):
+    """
+    - creator_id: 그룹 생성자 ID
+    
+    Returns:
+    - 취소된 그룹 정보
+    - 추방된 멤버 목록
+    - 취소 시간 정보
+    """
+    try:
+        result = family_group_service.cancel_group_creation(creator_id)
+        return result
+    except ValueError as e:
+        error_code = str(e)
+        if error_code == "NO_PENDING_GROUP":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="생성 중인 그룹이 없습니다"
+            )
+        elif error_code == "NOT_GROUP_CREATOR":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="그룹 생성자만 그룹 생성을 취소할 수 있습니다"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="그룹 생성 취소 중 오류가 발생했습니다"
+        )

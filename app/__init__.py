@@ -11,3 +11,6 @@ from app.config import Development as Config
 
 WEB_HOST = Config.WEB_HOST
 WEB_PORT = Config.WEB_PORT
+
+OLLAMA_URL = Config.OLLAMA_URL
+OLLAMA_MODEL = Config.OLLAMA_MODEL
