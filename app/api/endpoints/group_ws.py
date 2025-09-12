@@ -10,7 +10,7 @@ from app.schemas.family_group import (
 
 router = APIRouter()
 
-@router.websocket("/group/{user_id}")
+@router.websocket("/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     """
     WebSocket 연결 엔드포인트
