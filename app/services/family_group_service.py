@@ -53,7 +53,7 @@ class FamilyGroupService:
         
         # 임시 그룹 데이터 저장 (아직 완성되지 않은 상태)
         pending_group_data = {
-            "group_name": request.group_name,
+            #"group_name": request.group_name,
             "creator_id": request.user_id,
             "creator_name": request.user_name,
             "members": {
@@ -78,7 +78,7 @@ class FamilyGroupService:
         
         return FamilyGroupCreateResponse(
             group_id=f"pending_{join_code}",  # 임시 ID
-            group_name=request.group_name,
+            #group_name=request.group_name,
             join_code=join_code,
             creator_id=request.user_id,
             created_at=created_at
@@ -118,7 +118,7 @@ class FamilyGroupService:
         
         return FamilyGroupJoinResponse(
             group_id=group_id,
-            group_name=group_data["group_name"],
+            #group_name=group_data["group_name"],
             creator_name=group_data["creator_name"],
             joined_at=joined_at
         )
@@ -148,7 +148,7 @@ class FamilyGroupService:
         
         return FamilyGroupInfoResponse(
             group_id=group_id,
-            group_name=group_data["group_name"],
+            #group_name=group_data["group_name"],
             member_count=len(members),
             members=members,
             created_at=group_data["created_at"]
@@ -213,7 +213,7 @@ class FamilyGroupService:
         
         return FamilyGroupJoinResponse(
             group_id=f"pending_{join_code}",
-            group_name=pending_group["group_name"],
+            #group_name=pending_group["group_name"],
             creator_name=pending_group["creator_name"],
             joined_at=joined_at
         )
@@ -233,7 +233,7 @@ class FamilyGroupService:
         group_id = self._generate_group_id()
         group_data = {
             "group_id": group_id,
-            "group_name": pending_group["group_name"],
+            #"group_name": pending_group["group_name"],
             "creator_id": pending_group["creator_id"],
             "creator_name": pending_group["creator_name"],
             "members": pending_group["members"],
@@ -264,7 +264,7 @@ class FamilyGroupService:
         members_list = list(group_data["members"].keys())
         return {
             "group_id": group_id,
-            "group_name": group_data["group_name"],
+            #"group_name": group_data["group_name"],
             "creator_name": group_data["creator_name"],
             "members": members_list,  # 멤버 ID 목록
             "total_members": len(members_list),  # 총 멤버 수
@@ -319,6 +319,13 @@ class FamilyGroupService:
                 pending_group = self.pending_groups[join_code]
                 creator_id = pending_group["creator_id"]
                 
+                # WebSocket으로 만료 알림 전송
+                try:
+                    from app.services.websocket_manager import websocket_manager
+                    await websocket_manager.handle_group_expiration(join_code)
+                except ImportError:
+                    pass  # WebSocket이 없는 경우 무시
+                
                 # 대기 상태 정리
                 if join_code in self.pending_groups:
                     del self.pending_groups[join_code]
@@ -349,7 +356,7 @@ class FamilyGroupService:
                 
                 return {
                     "join_code": join_code,
-                    "group_name": pending_group["group_name"],
+                    #"group_name": pending_group["group_name"],
                     "creator_id": pending_group["creator_id"],
                     "members": members_data,
                     "total_members": len(pending_group["members"]),
@@ -371,7 +378,7 @@ class FamilyGroupService:
                 
                 return {
                     "join_code": join_code,
-                    "group_name": pending_group["group_name"],
+                    #"group_name": pending_group["group_name"],
                     "creator_id": pending_group["creator_id"],
                     "members": members_data,
                     "total_members": len(pending_group["members"]),
