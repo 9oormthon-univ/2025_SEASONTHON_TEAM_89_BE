@@ -329,6 +329,13 @@ class FamilyGroupService:
                 pending_group = self.pending_groups[join_code]
                 creator_id = pending_group["creator_id"]
                 
+                # WebSocket으로 만료 알림 전송
+                try:
+                    from app.services.websocket_manager import websocket_manager
+                    await websocket_manager.handle_group_expiration(join_code)
+                except ImportError:
+                    pass  # WebSocket이 없는 경우 무시
+                
                 # 대기 상태 정리
                 if join_code in self.pending_groups:
                     del self.pending_groups[join_code]
