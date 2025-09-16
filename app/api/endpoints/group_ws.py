@@ -118,7 +118,11 @@ async def handle_join_group(user_id: str, payload: dict):
     await websocket_manager.handle_member_join(
         request.join_code,
         user_id,
-        {"user_name": request.user_name}
+        {
+            "user_name": request.user_name,
+            "group_id": result.group_id,
+            "joined_at": result.joined_at.isoformat()
+        }
     )
 
 async def handle_kick_member(user_id: str, payload: dict):
