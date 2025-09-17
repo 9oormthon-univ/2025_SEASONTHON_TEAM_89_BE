@@ -72,7 +72,7 @@ class FamilyGroupService:
         self.pending_codes[request.user_id] = join_code
         self.waiting_users[join_code] = {request.user_id}
         
-        # 5분 타이머 시작
+        # 20분 타이머 시작
         timer_task = asyncio.create_task(self._expire_group_creation(join_code))
         self.group_timers[join_code] = timer_task
         
@@ -321,9 +321,9 @@ class FamilyGroupService:
         }
     
     async def _expire_group_creation(self, join_code: str):
-        """5분 후 그룹 생성 만료"""
+        """20분 후 그룹 생성 만료"""
         try:
-            await asyncio.sleep(300)  # 5분 대기
+            await asyncio.sleep(1200)  # 20분 대기
             
             if join_code in self.pending_groups:
                 pending_group = self.pending_groups[join_code]
@@ -443,6 +443,61 @@ class FamilyGroupService:
             "total_kicked_members": total_kicked,
             "cancelled_at": datetime.now().isoformat(),
             "cancelled_by": creator_id
+        }
+
+    def handle_user_disconnect(self, user_id: str) -> dict:
+        """사용자 연결 끊김 처리"""
+        result = {"action": "none", "message": "사용자가 어떤 그룹에도 속하지 않음"}
+        
+        # 1. 생성 중인 그룹의 생성자인 경우 -> 그룹 파괴
+        if user_id in self.pending_codes:
+            try:
+                result = self.cancel_group_creation(user_id)
+                result["action"] = "group_destroyed"
+                result["message"] = f"그룹 생성자({user_id})의 연결이 끊어져 그룹생성이 종료되었습니다."
+                return result
+            except ValueError:
+                pass
+        
+        # 2. 대기 중인 그룹의 멤버인 경우 -> 그룹에서 제거
+        for join_code, user_set in self.waiting_users.items():
+            if user_id in user_set:
+                result = self.remove_member_from_pending_group(user_id, join_code)
+                result["action"] = "member_removed"
+                result["message"] = f"멤버({user_id})의 연결이 끊어져 그룹에서 제거되었습니다."
+                return result
+        
+        return result
+
+    def remove_member_from_pending_group(self, user_id: str, join_code: str) -> dict:
+        """대기 중인 그룹에서 멤버 제거 (연결 끊김용)"""
+        if join_code not in self.pending_groups:
+            return {"success": False, "error": "그룹을 찾을 수 없음"}
+        
+        pending_group = self.pending_groups[join_code]
+        
+        # 멤버 정보 수집
+        removed_member = None
+        if user_id in pending_group["members"]:
+            removed_member = pending_group["members"][user_id].copy()
+            removed_member["joined_at"] = removed_member["joined_at"].isoformat()
+            
+            # 그룹에서 제거
+            del pending_group["members"][user_id]
+        
+        # 대기 사용자 목록에서 제거
+        if join_code in self.waiting_users:
+            self.waiting_users[join_code].discard(user_id)
+        
+        remaining_members = len(pending_group["members"])
+        
+        return {
+            "success": True,
+            "join_code": join_code,
+            "removed_member": removed_member,
+            "remaining_members": remaining_members,
+            "removed_at": datetime.now().isoformat(),
+            "reason": "connection_lost"
         }
 
 # 싱글톤 서비스 인스턴스
