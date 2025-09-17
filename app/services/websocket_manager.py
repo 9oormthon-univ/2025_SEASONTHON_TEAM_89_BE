@@ -36,11 +36,62 @@ class WebSocketManager:
         if user_id in self.active_connections:
             del self.active_connections[user_id]
             
-        # 그룹에서도 제거
+        # 그룹에서도 제거 (안전하게 처리)
+        join_code_to_remove = None
         for join_code, members in self.group_members.items():
             if user_id in members:
-                members.remove(user_id)
+                join_code_to_remove = join_code
                 break
+        
+        if join_code_to_remove:
+            self.group_members[join_code_to_remove].discard(user_id)
+            # 빈 그룹은 제거
+            if not self.group_members[join_code_to_remove]:
+                del self.group_members[join_code_to_remove]
+
+    async def handle_user_disconnect(self, user_id: str):
+        """사용자 연결 끊김 시 그룹 처리"""
+        # 연결 정리
+        self.disconnect(user_id)
+        
+        # family_group_service에서 연결 끊김 처리
+        disconnect_result = family_group_service.handle_user_disconnect(user_id)
+        
+        if disconnect_result["action"] == "group_destroyed":
+            # 그룹이 파괴된 경우 모든 멤버에게 알림
+            join_code = disconnect_result.get("join_code")
+            if join_code:
+                await self.broadcast_to_group(join_code, {
+                    "type": "group_destroyed",
+                    "data": {
+                        "message": "그룹 생성자의 연결이 끊어져 그룹이 해체되었습니다.",
+                        "destroyed_at": disconnect_result.get("cancelled_at"),
+                        "reason": "creator_disconnected"
+                    }
+                }, exclude_user=user_id)
+                
+                # 그룹 멤버 매핑 정리
+                if join_code in self.group_members:
+                    del self.group_members[join_code]
+                    
+        elif disconnect_result["action"] == "member_removed":
+            # 멤버가 제거된 경우 다른 멤버들에게 알림
+            join_code = disconnect_result.get("join_code")
+            removed_member = disconnect_result.get("removed_member")
+            
+            if join_code and removed_member:
+                await self.broadcast_to_group(join_code, {
+                    "type": "member_disconnected",
+                    "data": {
+                        "user_id": user_id,
+                        "user_name": removed_member.get("user_name"),
+                        "message": f"{removed_member.get('user_name')}님의 연결이 끊어져 그룹에서 나갔습니다.",
+                        "remaining_members": disconnect_result.get("remaining_members"),
+                        "disconnected_at": disconnect_result.get("removed_at")
+                    }
+                }, exclude_user=user_id)
+        
+        return disconnect_result
     
     async def send_personal_message(self, user_id: str, message: dict):
         """특정 사용자에게 메시지 전송"""

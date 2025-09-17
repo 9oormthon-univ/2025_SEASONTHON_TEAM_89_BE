@@ -19,7 +19,7 @@ router = APIRouter()
     response_model=FamilyGroupCreateResponse,
     status_code=status.HTTP_201_CREATED,
     summary="가족 그룹 생성 (대기 상태)",
-    description="새로운 가족 그룹을 대기 상태로 생성 및 10자리 참여 코드를 발급함 5분 안에 타 사용자는 해당 코드로 참여해야 함."
+    description="새로운 가족 그룹을 대기 상태로 생성 및 10자리 참여 코드를 발급함 20분 안에 타 사용자는 해당 코드로 참여해야 함."
 )
 async def create_family_group(request: FamilyGroupCreateRequest):
     """
@@ -31,7 +31,7 @@ async def create_family_group(request: FamilyGroupCreateRequest):
     
     Returns:
     - 대기 상태인 그룹 정보와 10자리 참여 코드
-    - 5분 안에 완성 버튼을 눌러야 정식 그룹이 됨
+    - 20분 안에 완성 버튼을 눌러야 정식 그룹이 됨
     """
     try:
         result = family_group_service.create_family_group(request)

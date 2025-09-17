@@ -31,7 +31,9 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     5. 추방당함: {"type": "kicked_from_group", "data": {...}}
     6. 그룹 완성: {"type": "group_completed", "data": {...}}
     7. 그룹 만료: {"type": "group_expired", "data": {...}}
-    8. 에러: {"type": "error", "data": {"message": "...", "code": "..."}}
+    8. 멤버 연결 끊김: {"type": "member_disconnected", "data": {...}}
+    9. 그룹 파괴됨: {"type": "group_destroyed", "data": {...}}
+    10. 에러: {"type": "error", "data": {"message": "...", "code": "..."}}
     """
     await websocket_manager.connect(websocket, user_id)
     
@@ -85,7 +87,11 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 })
                 
     except WebSocketDisconnect:
-        websocket_manager.disconnect(user_id)
+        # 연결 끊김 시 그룹 처리
+        await websocket_manager.handle_user_disconnect(user_id)
+    except Exception as e:
+        # 기타 예외 발생 시도 연결 끊김 처리
+        await websocket_manager.handle_user_disconnect(user_id)
 
 async def handle_create_group(user_id: str, payload: dict):
     """그룹 생성 처리"""
@@ -118,7 +124,11 @@ async def handle_join_group(user_id: str, payload: dict):
     await websocket_manager.handle_member_join(
         request.join_code,
         user_id,
-        {"user_name": request.user_name}
+        {
+            "user_name": request.user_name,
+            "group_id": result.group_id,
+            "joined_at": result.joined_at.isoformat()
+        }
     )
 
 async def handle_kick_member(user_id: str, payload: dict):
