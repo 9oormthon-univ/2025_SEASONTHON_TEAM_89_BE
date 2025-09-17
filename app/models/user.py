@@ -12,7 +12,8 @@ class User(Base):
     # 기본 사용자 정보    # TODO : 타 OAuth 연동시, kakao_id 대체 필요
     kakao_id = Column(String(50), unique=True, index=True, nullable=False, comment="카카오 사용자 ID")
     nickname = Column(String(100), nullable=False, comment="사용자 닉네임")
-    
+    profile_image = Column(Text, nullable=True, comment="프로필 이미지 URL(선택사항)")
+
     # 상태 관리
     is_active = Column(Boolean, default=True, comment="활성 상태")
     
