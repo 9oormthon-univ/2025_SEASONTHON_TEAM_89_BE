@@ -11,7 +11,6 @@ class KakaoService:
 
     카카오 동의항목:
     - 닉네임 (필수)
-    - 프로필 사진 (선택)
     """
     
     KAKAO_AUTH_HOST = "https://kauth.kakao.com"
@@ -89,8 +88,7 @@ class KakaoService:
                 
                 return KakaoUserProfile(
                     kakao_id=user_data["id"],
-                    nickname=profile.get("nickname", "Unknown"),
-                    profile_image=profile.get("profile_image_url")
+                    nickname=profile.get("nickname", "Unknown")
                 )
                 
             except httpx.HTTPStatusError as e:
