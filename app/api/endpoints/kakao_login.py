@@ -2,9 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.kakao import (
-    KakaoLoginRequest, 
+    KakaoTokenLoginRequest,
     LoginResponse, 
-    KakaoLoginUrlResponse,
     UserResponse,
     KakaoUserProfile
 )
@@ -17,64 +16,28 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.get("/login", response_model=KakaoLoginUrlResponse)
-async def get_kakao_login_url():
-    """
-    카카오 로그인 URL 반환
-
-    Custom URL Scheme을 사용하여 앱으로 다시 돌아옴
-    """
-    try:
-        redirect_uri = f"{settings.APP_CUSTOM_SCHEME}://kakao-callback"
-        
-        login_url = kakao_service.get_login_url(
-            redirect_uri=redirect_uri
-        )
-        
-        return KakaoLoginUrlResponse(
-            login_url=login_url,
-            state=None,
-            redirect_uri=redirect_uri,
-            client_id=settings.kakao_client_url
-        )
-        
-    except Exception as e:
-        logger.error(f"모바일 로그인 URL 생성 실패: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="로그인 URL 생성에 실패했습니다"
-        )
-
-@router.post("/callback", response_model=LoginResponse)
-async def kakao_login_callback(
-    request: KakaoLoginRequest,
+@router.post("/token", response_model=LoginResponse)
+async def kakao_login_with_token(
+    request: KakaoTokenLoginRequest,
     db: Session = Depends(get_db)
 ):
     """
-    카카오 로그인 콜백 처리
+    카카오 SDK 토큰을 이용한 간단 로그인
     
-    모바일 앱에서 인가 코드를 받고 -> 이 API로 POST 요청을 보냄
-    -> 이후 JSON 응답을 반환하여 모바일 앱에서 처리
+    iOS/Android SDK에서 이미 받은 카카오 액세스 토큰으로 직접 로그인 -> access_token 사용
     """
     try:
-        # 1. 카카오 액세스 토큰 획득
-        logger.info(f"카카오 로그인 시작 - code: {request.authorization_code[:10]}...")
-        token_response = await kakao_service.get_access_token(
-            request.authorization_code, 
-            request.redirect_uri
-        )
+        # 1. 카카오 사용자 정보 조회
+        logger.info("카카오 사용자 정보 요청")
+        user_profile = await kakao_service.get_user_info(request.access_token)
         
-        # 2. 카카오 사용자 정보 조회
-        logger.info("카카오 사용자 정보 요청 시작")
-        user_profile = await kakao_service.get_user_info(token_response.access_token)
-        
-        # 3. 사용자 조회 또는 생성
+        # 2. 사용자 조회 또는 생성
         logger.info(f"사용자 정보 : kakao_id={user_profile.kakao_id}")
         
         user_repo = get_user_repository(db)
         user, is_new_user = user_repo.get_or_create_user(user_profile)
         
-        # 4. JWT 토큰 생성
+        # 3. JWT 토큰 생성
         logger.info(f"JWT 토큰 생성: user_id={user.id}, is_new_user={is_new_user}")
         access_token = jwt_service.create_access_token(
             data={
@@ -84,7 +47,7 @@ async def kakao_login_callback(
             }
         )
         
-        # 5. JSON 응답 반환
+        # 4. JSON 응답 반환
         response = LoginResponse(
             access_token=access_token,
             token_type="bearer",

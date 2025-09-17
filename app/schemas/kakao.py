@@ -3,10 +3,9 @@ from typing import Optional
 from datetime import datetime
 
 # 카카오 로그인 요청/응답 스키마
-class KakaoLoginRequest(BaseModel):
-    """카카오 로그인 요청"""
-    authorization_code: str = Field(..., description="카카오에서 받은 인가 코드")
-    redirect_uri: str = Field(..., description="리다이렉트 URI")
+class KakaoTokenLoginRequest(BaseModel):
+    """카카오 SDK 토큰 로그인 요청"""
+    access_token: str = Field(..., description="카카오 SDK에서 받은 액세스 토큰")
 
 class KakaoUserProfile(BaseModel):
     """카카오 사용자 프로필 정보"""
@@ -35,22 +34,7 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class KakaoLoginUrlResponse(BaseModel):
-    """카카오 로그인 URL 응답"""
-    login_url: str = Field(..., description="카카오 로그인 URL")
-    state: Optional[str] = Field(None, description="CSRF 방지용 state 값")
-    redirect_uri: Optional[str] = Field(None, description="리다이렉트 URI (모바일용)")
-    client_id: Optional[str] = Field(None, description="카카오 클라이언트 ID")
-
 # 내부 사용 스키마
-class KakaoTokenResponse(BaseModel):
-    """카카오 토큰 응답 (내부 사용)"""
-    access_token: str
-    token_type: str
-    refresh_token: Optional[str] = None
-    expires_in: int
-    scope: Optional[str] = None
-
 class KakaoUserInfoResponse(BaseModel):
     """카카오 사용자 정보 응답 (내부 사용)"""
     id: int
