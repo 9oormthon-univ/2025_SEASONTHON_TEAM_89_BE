@@ -12,6 +12,7 @@ class KakaoUserProfile(BaseModel):
     """카카오 사용자 프로필 정보"""
     kakao_id: int = Field(..., description="카카오 사용자 ID")
     nickname: str = Field(..., description="사용자 닉네임")
+    profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
 
 class LoginResponse(BaseModel):
     """로그인 응답"""
@@ -26,6 +27,7 @@ class UserResponse(BaseModel):
     id: int = Field(..., description="내부 사용자 ID")
     kakao_id: str = Field(..., description="카카오 사용자 ID") 
     nickname: str = Field(..., description="사용자 닉네임")
+    profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
     is_active: bool = Field(..., description="활성 상태")
     created_at: datetime = Field(..., description="계정 생성일")
     last_login_at: Optional[datetime] = Field(None, description="마지막 로그인 시간")

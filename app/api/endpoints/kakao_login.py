@@ -91,7 +91,8 @@ async def kakao_login_callback(
             expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             user=KakaoUserProfile(
                 kakao_id=int(user.kakao_id),
-                nickname=user.nickname
+                nickname=user.nickname,
+                profile_image=user.profile_image or ""
             ),
             is_new_user=is_new_user
         )

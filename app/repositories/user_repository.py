@@ -48,6 +48,7 @@ class UserRepository:
             new_user = User(
                 kakao_id=str(kakao_profile.kakao_id),
                 nickname=kakao_profile.nickname,
+                profile_image=kakao_profile.profile_image or "",
                 is_active=True,
                 last_login_at=datetime.utcnow()
             )
@@ -68,6 +69,7 @@ class UserRepository:
         """사용자 프로필 업데이트"""
         try:
             user.nickname = kakao_profile.nickname
+            user.profile_image = kakao_profile.profile_image or ""
             user.updated_at = datetime.utcnow()
             
             self.db.commit()
