@@ -42,13 +42,18 @@ class UserRepository:
             logger.error(f"사용자 조회 실패: id={user_id}, error={str(e)}")
             return None
     
-    def create_user(self, kakao_profile: KakaoUserProfile) -> User:
+    def create_user(self, kakao_profile: KakaoUserProfile, device_token: Optional[str] = None) -> User:
         """새 사용자 생성"""
         try:
             new_user = User(
                 kakao_id=str(kakao_profile.kakao_id),
                 nickname=kakao_profile.nickname,
                 profile_image=kakao_profile.profile_image or "",
+                # 새 컬럼들 기본값 설정
+                group_id=None,
+                warning_count=0,
+                danger_count=0,
+                device_token=device_token,
                 is_active=True,
                 last_login_at=datetime.utcnow()
             )
@@ -65,11 +70,14 @@ class UserRepository:
             self.db.rollback()
             raise
     
-    def update_user_profile(self, user: User, kakao_profile: KakaoUserProfile) -> User:
+    def update_user_profile(self, user: User, kakao_profile: KakaoUserProfile, device_token: Optional[str] = None) -> User:
         """사용자 프로필 업데이트"""
         try:
             user.nickname = kakao_profile.nickname
             user.profile_image = kakao_profile.profile_image or ""
+            # 디바이스 토큰 업데이트 (제공된 경우에만)
+            if device_token is not None:
+                user.device_token = device_token
             user.updated_at = datetime.utcnow()
             
             self.db.commit()
@@ -115,7 +123,7 @@ class UserRepository:
             self.db.rollback()
             raise
     
-    def get_or_create_user(self, kakao_profile: KakaoUserProfile) -> tuple[User, bool]:
+    def get_or_create_user(self, kakao_profile: KakaoUserProfile, device_token: Optional[str] = None) -> tuple[User, bool]:
         """사용자 조회 또는 생성 (is_new_user 반환)"""
         try:
             # 기존 사용자 조회
@@ -123,12 +131,12 @@ class UserRepository:
             
             if existing_user:
                 # 기존 사용자일 때 프로필 업데이트 및 로그인 시간 갱신
-                updated_user = self.update_user_profile(existing_user, kakao_profile)
+                updated_user = self.update_user_profile(existing_user, kakao_profile, device_token)
                 self.update_last_login(updated_user)
                 return updated_user, False
             else:
                 # 신규 사용자 생성
-                new_user = self.create_user(kakao_profile)
+                new_user = self.create_user(kakao_profile, device_token)
                 return new_user, True
                 
         except Exception as e:

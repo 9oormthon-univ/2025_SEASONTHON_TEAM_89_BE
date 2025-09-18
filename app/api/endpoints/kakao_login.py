@@ -1,11 +1,14 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
+from datetime import datetime
 from app.core.database import get_db
 from app.schemas.kakao import (
     KakaoTokenLoginRequest,
     LoginResponse, 
     UserResponse,
-    KakaoUserProfile
+    KakaoUserProfile,
+    DeviceTokenUpdateRequest,
+    DeviceTokenUpdateResponse
 )
 from app.services.kakao_service import kakao_service
 from app.services.jwt_service import jwt_service
@@ -35,7 +38,7 @@ async def kakao_login_with_token(
         logger.info(f"사용자 정보 : kakao_id={user_profile.kakao_id}")
         
         user_repo = get_user_repository(db)
-        user, is_new_user = user_repo.get_or_create_user(user_profile)
+        user, is_new_user = user_repo.get_or_create_user(user_profile, request.device_token)
         
         # 3. JWT 토큰 생성
         logger.info(f"JWT 토큰 생성: user_id={user.id}, is_new_user={is_new_user}")
@@ -116,4 +119,59 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="사용자 정보 조회 실패"
+        )
+
+@router.patch("/device-token", response_model=DeviceTokenUpdateResponse)
+async def update_device_token(
+    request: DeviceTokenUpdateRequest,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    디바이스 토큰 업데이트
+    
+    APNs 푸시 알림을 받기 위한 디바이스 토큰을 업데이트
+    """
+    try:
+        # JWT 토큰 검증
+        payload = jwt_service.verify_token(token)
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="유효하지 않은 토큰",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
+        # 사용자 조회
+        user_id = payload.get("user_id")
+        user_repo = get_user_repository(db)
+        user = user_repo.get_by_id(user_id)
+        
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="사용자를 찾을 수 없음"
+            )
+        
+        # 디바이스 토큰 업데이트
+        user.device_token = request.device_token
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(user)
+        
+        logger.info(f"디바이스 토큰 업데이트 성공: user_id={user_id}")
+        
+        return DeviceTokenUpdateResponse(
+            success=True,
+            message="디바이스 토큰이 성공적으로 업데이트되었습니다"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"디바이스 토큰 업데이트 실패: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="디바이스 토큰 업데이트 실패"
         )
