@@ -41,10 +41,10 @@ async def kakao_login_with_token(
         user, is_new_user = user_repo.get_or_create_user(user_profile, request.device_token)
         
         # 3. JWT 토큰 생성
-        logger.info(f"JWT 토큰 생성: user_id={user.id}, is_new_user={is_new_user}")
+        logger.info(f"JWT 토큰 생성: user_id={user.user_id}, is_new_user={is_new_user}")
         access_token = jwt_service.create_access_token(
             data={
-                "user_id": user.id,
+                "user_id": user.user_id,  # UUID 사용
                 "kakao_id": user.kakao_id,
                 "nickname": user.nickname
             }
@@ -56,6 +56,7 @@ async def kakao_login_with_token(
             token_type="bearer",
             expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             user=KakaoUserProfile(
+                user_id=user.user_id,  # UUID 사용
                 kakao_id=int(user.kakao_id),
                 nickname=user.nickname,
                 profile_image=user.profile_image or ""
@@ -63,7 +64,7 @@ async def kakao_login_with_token(
             is_new_user=is_new_user
         )
         
-        logger.info(f"카카오 로그인 성공: user_id={user.id}, is_new_user={is_new_user}")
+        logger.info(f"카카오 로그인 성공: user_id={user.user_id}, is_new_user={is_new_user}")
         return response
         
     except ValueError as e:

@@ -1,13 +1,19 @@
-from sqlalchemy import Column, BigInteger, String, DateTime, Boolean, Text, Integer
+from sqlalchemy import Column, String, DateTime, Boolean, Text, Integer
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.mysql import CHAR
+import uuid
 from app.core.database import Base
+
+def generate_uuid():
+    """UUID 생성 함수"""
+    return str(uuid.uuid4())
 
 class User(Base):
     """사용자 모델"""
     __tablename__ = "users"
     
-    # 기본 ID (내부 사용)
-    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    # UUID를 Primary Key로 사용
+    user_id = Column(CHAR(36), primary_key=True, index=True, default=generate_uuid, comment="사용자 ID (UUID)")
     
     # 기본 사용자 정보    # TODO : 타 OAuth 연동시, kakao_id 대체 필요
     kakao_id = Column(String(50), unique=True, index=True, nullable=False, comment="카카오 사용자 ID")
@@ -33,4 +39,4 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True), nullable=True, comment="마지막 로그인 시간")
     
     def __repr__(self):
-        return f"<User(id={self.id}, kakao_id={self.kakao_id}, nickname={self.nickname})>"
+        return f"<User(user_id={self.user_id}, kakao_id={self.kakao_id}, nickname={self.nickname})>"

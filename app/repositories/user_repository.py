@@ -28,18 +28,18 @@ class UserRepository:
             logger.error(f"사용자 조회 실패: kakao_id={kakao_id}, error={str(e)}")
             return None
     
-    def get_by_id(self, user_id: int) -> Optional[User]:
-        """사용자 ID로 조회"""
+    def get_by_user_id(self, user_id: str) -> Optional[User]:
+        """사용자 ID(UUID)로 사용자 조회"""
         try:
             user = self.db.query(User).filter(
-                User.id == user_id,
+                User.user_id == user_id,
                 User.is_active == True
             ).first()
             if user:
-                logger.info(f"사용자 조회 성공: id={user_id}")
+                logger.info(f"사용자 조회 성공: user_id={user_id}")
             return user
         except Exception as e:
-            logger.error(f"사용자 조회 실패: id={user_id}, error={str(e)}")
+            logger.error(f"사용자 조회 실패: user_id={user_id}, error={str(e)}")
             return None
     
     def create_user(self, kakao_profile: KakaoUserProfile, device_token: Optional[str] = None) -> User:
@@ -62,7 +62,7 @@ class UserRepository:
             self.db.commit()
             self.db.refresh(new_user)
             
-            logger.info(f"새 사용자 생성 성공: kakao_id={kakao_profile.kakao_id}, id={new_user.id}")
+            logger.info(f"새 사용자 생성 성공: kakao_id={kakao_profile.kakao_id}, user_id={new_user.user_id}")
             return new_user
             
         except Exception as e:

@@ -19,6 +19,9 @@ from app.schemas.family_group import (
 
 
 class FamilyGroupService:
+    # 그룹 설정 상수
+    MAX_MEMBERS = 8  # 그룹 최대 멤버 수
+    
     def __init__(self):
         self.db_dependency = get_db
     
@@ -135,13 +138,17 @@ class FamilyGroupService:
             if user_info.group_id:
                 raise ValueError("USER_ALREADY_IN_GROUP")
             
-            # 2. 그룹 존재 확인
+            # 2. 그룹 존재 확인 및 현재 멤버 수 체크
             group_info = db.execute(text(
-                "SELECT id, creator_id FROM family_groups WHERE join_code = :join_code"
+                "SELECT id, creator_id, current_members FROM family_groups WHERE join_code = :join_code"
             ), {"join_code": request.join_code}).fetchone()
             
             if not group_info:
                 raise ValueError("INVALID_JOIN_CODE")
+            
+            # 최대 멤버 수 체크
+            if group_info.current_members >= self.MAX_MEMBERS:
+                raise ValueError("GROUP_FULL")
             
             # 3. 이미 그룹에 속해있는지 확인
             existing_member = db.execute(text(
@@ -424,11 +431,11 @@ class FamilyGroupService:
         try:
             groups_data = db.execute(text(
                 """
-                SELECT fg.id, fg.group_name, fg.join_code, fg.creator_id, fg.created_at,
+                SELECT fg.id, fg.join_code, fg.creator_id, fg.created_at,
                        COUNT(gm.user_id) as member_count
                 FROM family_groups fg
                 LEFT JOIN group_members gm ON fg.id = gm.group_id
-                GROUP BY fg.id, fg.group_name, fg.join_code, fg.creator_id, fg.created_at
+                GROUP BY fg.id, fg.join_code, fg.creator_id, fg.created_at
                 ORDER BY fg.created_at DESC
                 """
             )).fetchall()
@@ -437,11 +444,11 @@ class FamilyGroupService:
             for group in groups_data:
                 groups.append({
                     "group_id": group.id,
-                    "group_name": group.group_name,
                     "join_code": group.join_code,
                     "creator_id": group.creator_id,
                     "created_at": group.created_at.isoformat(),
-                    "member_count": group.member_count
+                    "member_count": group.member_count,
+                    "max_members": self.MAX_MEMBERS  # 서비스에서 관리
                 })
             
             return groups

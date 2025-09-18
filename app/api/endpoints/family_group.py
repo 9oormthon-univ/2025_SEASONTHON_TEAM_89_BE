@@ -88,6 +88,11 @@ async def join_family_group(request: FamilyGroupJoinRequest):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="유효하지 않은 참여 코드"
             )
+        elif error_code == "GROUP_FULL":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="그룹이 가득 참 (최대 8명)"
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="그룹 참여 실패"

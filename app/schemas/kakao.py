@@ -10,6 +10,7 @@ class KakaoTokenLoginRequest(BaseModel):
 
 class KakaoUserProfile(BaseModel):
     """카카오 사용자 프로필 정보"""
+    user_id: str = Field(..., description="사용자 ID (UUID)")  
     kakao_id: int = Field(..., description="카카오 사용자 ID")
     nickname: str = Field(..., description="사용자 닉네임")
     profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
@@ -34,7 +35,7 @@ class DeviceTokenUpdateResponse(BaseModel):
 
 class UserResponse(BaseModel):
     """사용자 정보 응답"""
-    id: int = Field(..., description="내부 사용자 ID")
+    user_id: str = Field(..., description="사용자 ID (UUID)")
     kakao_id: str = Field(..., description="카카오 사용자 ID") 
     nickname: str = Field(..., description="사용자 닉네임")
     profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
