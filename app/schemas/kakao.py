@@ -10,7 +10,7 @@ class KakaoTokenLoginRequest(BaseModel):
 
 class KakaoUserProfile(BaseModel):
     """카카오 사용자 프로필 정보"""
-    user_id: str = Field(..., description="사용자 ID (UUID)")  
+    user_id: Optional[str] = Field(None, description="사용자 ID (UUID)")  
     kakao_id: int = Field(..., description="카카오 사용자 ID")
     nickname: str = Field(..., description="사용자 닉네임")
     profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
@@ -31,6 +31,20 @@ class DeviceTokenUpdateRequest(BaseModel):
 class DeviceTokenUpdateResponse(BaseModel):
     """디바이스 토큰 업데이트 응답"""
     success: bool = Field(..., description="업데이트 성공 여부")
+    message: str = Field(..., description="결과 메시지")
+
+# 카카오 앱 연동 해제 스키마
+class KakaoUnlinkRequest(BaseModel):
+    """카카오 앱 연동 해제 요청"""
+    access_token: str = Field(..., description="카카오 액세스 토큰")
+
+class KakaoAdminUnlinkRequest(BaseModel):
+    """카카오 관리자 권한 연동 해제 요청"""
+    kakao_id: int = Field(..., description="해제할 카카오 사용자 ID")
+
+class KakaoUnlinkResponse(BaseModel):
+    """카카오 앱 연동 해제 응답"""
+    success: bool = Field(..., description="연동 해제 성공 여부")
     message: str = Field(..., description="결과 메시지")
 
 class UserResponse(BaseModel):

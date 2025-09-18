@@ -25,6 +25,7 @@ async def create_family_group(request: FamilyGroupCreateRequest):
     가족 그룹 생성 API
     
     - user_id: 그룹을 생성하는 사용자 ID
+    - group_name: 그룹 이름 (1~30자)
     - nickname: 그룹에서 사용할 별명 (1~20자)
     
     Returns:
@@ -194,14 +195,24 @@ async def get_family_group_info(user_id: str):
     
     Returns:
     - 그룹 정보, 구성원 수, 각 구성원의 이름과 경고 횟수
+    - 요청한 사용자의 역할 정보 (방장/참여자)
     """
+    # 1. 기본 그룹 정보 조회
     result = family_group_service.get_family_group_info(user_id)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="가족 그룹에 속해있지 않음"
         )
-    return result
+    
+    # 2. 사용자 역할 정보 추가
+    user_role = family_group_service.get_user_role_in_group(user_id)
+    
+    # 3. 응답에 역할 정보 포함
+    response_data = result.dict()
+    response_data["is_creator"] = user_role["is_creator"]
+    
+    return response_data
 
 @router.get(
     "/user/{user_id}/status",
@@ -222,6 +233,38 @@ async def get_user_group_status(user_id: str):
     return {
         "success": True,
         "data": status_info
+    }
+
+@router.get(
+    "/user/{user_id}/role",
+    status_code=status.HTTP_200_OK,
+    summary="사용자 그룹 역할 조회",
+    description="사용자의 그룹 내 역할(방장/참여자) 정보 조회"
+)
+async def get_user_role(user_id: str):
+    """
+    사용자 그룹 역할 조회 API
+    
+    - user_id: 사용자 ID
+    
+    Returns:
+    - 사용자의 그룹 내 역할 정보
+      - status: "in_group" | "no_group" | "error"
+      - is_creator: 방장 여부 (boolean)
+      - group_id: 그룹 ID
+      - nickname: 그룹 내 닉네임
+      - joined_at: 그룹 참여 시간
+    """
+    role_info = family_group_service.get_user_role_in_group(user_id)
+    return {
+        "success": True,
+        "data": {
+            "status": role_info["status"],
+            "is_creator": role_info["is_creator"],
+            "group_id": role_info.get("group_id"),
+            "nickname": role_info.get("nickname"),
+            "joined_at": role_info.get("joined_at")
+        }
     }
 
 @router.get(

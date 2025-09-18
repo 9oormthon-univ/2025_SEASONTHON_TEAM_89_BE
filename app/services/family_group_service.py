@@ -58,7 +58,7 @@ class FamilyGroupService:
         try:
             # 1. 사용자가 이미 그룹에 속해있는지 확인 및 사용자 정보 조회
             user_info = db.execute(text(
-                "SELECT id, group_id FROM users WHERE id = :user_id"
+                "SELECT user_id, group_id FROM users WHERE user_id = :user_id"
             ), {"user_id": request.user_id}).fetchone()
             
             if not user_info:
@@ -75,11 +75,12 @@ class FamilyGroupService:
             # 3. family_groups에 삽입
             db.execute(text(
                 """
-                INSERT INTO family_groups (id, creator_id, join_code, created_at)
-                VALUES (:group_id, :creator_id, :join_code, :created_at)
+                INSERT INTO family_groups (id, group_name, creator_id, join_code, created_at)
+                VALUES (:group_id, :group_name, :creator_id, :join_code, :created_at)
                 """
             ), {
                 "group_id": group_id,
+                "group_name": request.group_name,
                 "creator_id": request.user_id,
                 "join_code": join_code,
                 "created_at": created_at
@@ -101,7 +102,7 @@ class FamilyGroupService:
             
             # 5. 사용자 테이블에 그룹 ID 업데이트
             db.execute(text(
-                "UPDATE users SET group_id = :group_id WHERE id = :user_id"
+                "UPDATE users SET group_id = :group_id WHERE user_id = :user_id"
             ), {
                 "group_id": group_id,
                 "user_id": request.user_id
@@ -111,6 +112,7 @@ class FamilyGroupService:
             
             return FamilyGroupCreateResponse(
                 group_id=group_id,
+                group_name=request.group_name,
                 join_code=join_code,
                 creator_id=request.user_id,
                 created_at=created_at
@@ -129,7 +131,7 @@ class FamilyGroupService:
         try:
             # 1. 사용자가 이미 그룹에 속해있는지 확인 및 사용자 정보 조회
             user_info = db.execute(text(
-                "SELECT id, group_id FROM users WHERE id = :user_id"
+                "SELECT user_id, group_id FROM users WHERE user_id = :user_id"
             ), {"user_id": request.user_id}).fetchone()
             
             if not user_info:
@@ -204,7 +206,7 @@ class FamilyGroupService:
         try:
             # 1. 사용자의 그룹 ID 확인
             user_group = db.execute(text(
-                "SELECT group_id FROM users WHERE id = :user_id"
+                "SELECT group_id FROM users WHERE user_id = :user_id"
             ), {"user_id": user_id}).fetchone()
             
             if not user_group or not user_group.group_id:
@@ -212,7 +214,7 @@ class FamilyGroupService:
             
             # 2. 그룹 정보 조회
             group_info = db.execute(text(
-                "SELECT id, creator_id, join_code, created_at FROM family_groups WHERE id = :group_id"
+                "SELECT id, group_name, creator_id, join_code, created_at FROM family_groups WHERE id = :group_id"
             ), {"group_id": user_group.group_id}).fetchone()
             
             if not group_info:
@@ -224,10 +226,11 @@ class FamilyGroupService:
                 SELECT gm.user_id, gm.nickname, gm.joined_at, 
                        (gm.user_id = fg.creator_id) as is_creator,
                        COALESCE(u.warning_count, 0) as warning_count,
-                       COALESCE(u.danger_count, 0) as danger_count
+                       COALESCE(u.danger_count, 0) as danger_count,
+                       u.profile_image
                 FROM group_members gm
                 JOIN family_groups fg ON gm.group_id = fg.id
-                LEFT JOIN users u ON gm.user_id = u.id
+                LEFT JOIN users u ON gm.user_id = u.user_id
                 WHERE gm.group_id = :group_id
                 ORDER BY is_creator DESC, gm.joined_at ASC
                 """
@@ -239,6 +242,7 @@ class FamilyGroupService:
                 members.append(FamilyMember(
                     user_id=member.user_id,
                     nickname=member.nickname,
+                    profile_image=member.profile_image,
                     warning_count=member.warning_count,
                     danger_count=member.danger_count,
                     is_creator=bool(member.is_creator),
@@ -247,6 +251,7 @@ class FamilyGroupService:
             
             return FamilyGroupInfoResponse(
                 group_id=group_info.id,
+                group_name=group_info.group_name,
                 join_code=group_info.join_code,
                 creator_id=group_info.creator_id,
                 member_count=len(members),
@@ -267,7 +272,7 @@ class FamilyGroupService:
         try:
             # 1. 사용자의 그룹 정보 확인
             user_group = db.execute(text(
-                "SELECT group_id FROM users WHERE id = :user_id"
+                "SELECT group_id FROM users WHERE user_id = :user_id"
             ), {"user_id": user_id}).fetchone()
             
             if not user_group or not user_group.group_id:
@@ -333,7 +338,7 @@ class FamilyGroupService:
                 SELECT fg.id, fg.creator_id 
                 FROM family_groups fg
                 JOIN users u ON u.group_id = fg.id
-                WHERE u.id = :creator_id AND fg.creator_id = :creator_id
+                WHERE u.user_id = :creator_id AND fg.creator_id = :creator_id
                 """
             ), {"creator_id": request.creator_id}).fetchone()
             
@@ -456,6 +461,59 @@ class FamilyGroupService:
         except Exception as e:
             print(f"Error getting all groups: {e}")
             return []
+        finally:
+            db.close()
+    
+    def get_user_role_in_group(self, user_id: str) -> dict:
+        """사용자의 그룹 내 역할 정보 조회"""
+        db = self._get_db()
+        
+        try:
+            # 1. 사용자의 그룹 정보 조회
+            user_group_info = db.execute(text(
+                """
+                SELECT u.group_id, fg.creator_id,
+                       (u.user_id = fg.creator_id) as is_creator,
+                       gm.nickname, gm.joined_at
+                FROM users u
+                LEFT JOIN family_groups fg ON u.group_id = fg.id
+                LEFT JOIN group_members gm ON u.user_id = gm.user_id AND u.group_id = gm.group_id
+                WHERE u.user_id = :user_id
+                """
+            ), {"user_id": user_id}).fetchone()
+            
+            if not user_group_info or not user_group_info.group_id:
+                return {
+                    "status": "no_group",
+                    "user_id": user_id,
+                    "group_id": None,
+                    "is_creator": False,
+                    "role": None,
+                    "nickname": None,
+                    "joined_at": None
+                }
+            
+            return {
+                "status": "in_group",
+                "user_id": user_id,
+                "group_id": user_group_info.group_id,
+                "is_creator": bool(user_group_info.is_creator),
+                "role": "creator" if user_group_info.is_creator else "member",
+                "nickname": user_group_info.nickname,
+                "joined_at": user_group_info.joined_at.isoformat() if user_group_info.joined_at else None
+            }
+            
+        except Exception as e:
+            print(f"Error getting user role: {e}")
+            return {
+                "status": "error",
+                "user_id": user_id,
+                "group_id": None,
+                "is_creator": False,
+                "role": None,
+                "nickname": None,
+                "joined_at": None
+            }
         finally:
             db.close()
 

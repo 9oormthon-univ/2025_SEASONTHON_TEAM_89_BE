@@ -8,12 +8,15 @@ from app.schemas.kakao import (
     UserResponse,
     KakaoUserProfile,
     DeviceTokenUpdateRequest,
-    DeviceTokenUpdateResponse
+    DeviceTokenUpdateResponse,
+    KakaoUnlinkRequest,
+    KakaoAdminUnlinkRequest,
+    KakaoUnlinkResponse
 )
 from app.services.kakao_service import kakao_service
 from app.services.jwt_service import jwt_service
 from app.repositories.user_repository import get_user_repository
-from app.config import settings
+from app import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -103,7 +106,7 @@ async def get_current_user(
         # 사용자 조회
         user_id = payload.get("user_id")
         user_repo = get_user_repository(db)
-        user = user_repo.get_by_id(user_id)
+        user = user_repo.get_by_user_id(user_id)
         
         if not user or not user.is_active:
             raise HTTPException(
@@ -146,7 +149,7 @@ async def update_device_token(
         # 사용자 조회
         user_id = payload.get("user_id")
         user_repo = get_user_repository(db)
-        user = user_repo.get_by_id(user_id)
+        user = user_repo.get_by_user_id(user_id)
         
         if not user or not user.is_active:
             raise HTTPException(
@@ -175,4 +178,98 @@ async def update_device_token(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="디바이스 토큰 업데이트 실패"
+        )
+
+@router.post("/unlink", response_model=KakaoUnlinkResponse)
+async def kakao_unlink(
+    request: KakaoUnlinkRequest
+):
+    """
+    카카오 앱 연동 해제
+    
+    동의화면을 다시 보기 위해 카카오 서버에서 앱 연동을 해제합니다.
+    주의: 이 작업은 카카오 계정에서 완전히 앱 연돐을 해제합니다.
+    """
+    try:
+        # 카카오 서버에서 앱 연동 해제
+        logger.info("카카오 앱 연동 해제 요청")
+        success = await kakao_service.unlink_user(request.access_token)
+        
+        if success:
+            logger.info("카카오 앱 연동 해제 성공")
+            return KakaoUnlinkResponse(
+                success=True,
+                message="카카오 앱 연동이 성공적으로 해제되었습니다. 다음 로그인에서 동의화면이 나타납니다."
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="카카오 앱 연동 해제에 실패했습니다"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"카카오 앱 연동 해제 중 오류: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"앱 연동 해제 실패: {str(e)}"
+        )
+
+@router.post("/admin-unlink", response_model=KakaoUnlinkResponse)
+async def kakao_admin_unlink(
+    request: KakaoAdminUnlinkRequest
+):
+    """
+    카카오 관리자 권한으로 앱 연동 해제
+    
+    Admin Key를 사용하여 특정 사용자의 앱 연동을 강제로 해제합니다.
+    개발/테스트 환경에서만 사용하세요.
+    """
+    try:
+        # 카카오 서버에서 관리자 권한으로 앱 연동 해제
+        logger.info(f"카카오 관리자 권한 앱 연동 해제 요청: kakao_id={request.kakao_id}")
+        success = await kakao_service.admin_unlink_user(request.kakao_id)
+        
+        if success:
+            logger.info(f"카카오 관리자 권한 앱 연동 해제 성공: kakao_id={request.kakao_id}")
+            return KakaoUnlinkResponse(
+                success=True,
+                message=f"카카오 사용자 {request.kakao_id}의 앱 연동이 관리자 권한으로 해제되었습니다."
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="카카오 관리자 권한 앱 연동 해제에 실패했습니다"
+            )
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        error_msg = str(e)
+        if "KAKAO_ADMIN_KEY가 설정되지 않았습니다" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="서버 설정 오류: 카카오 관리자 키가 설정되지 않았습니다"
+            )
+        elif "KAKAO_ADMIN_KEY가 유효하지 않습니다" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="카카오 관리자 키가 유효하지 않습니다"
+            )
+        elif "카카오 사용자를 찾을 수 없습니다" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"카카오 사용자 ID {request.kakao_id}를 찾을 수 없습니다"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_msg
+            )
+    except Exception as e:
+        logger.error(f"카카오 관리자 권한 앱 연동 해제 중 오류: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"관리자 권한 앱 연동 해제 실패: {str(e)}"
         )

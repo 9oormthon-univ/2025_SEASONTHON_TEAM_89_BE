@@ -1,6 +1,11 @@
 # config
 config.py
 
+apple_push/
+
+#.env
+*.env
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

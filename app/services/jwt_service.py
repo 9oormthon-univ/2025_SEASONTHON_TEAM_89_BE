@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Union, Optional
 from jose import jwt, JWTError
-from app.config import settings
+from app import settings
 import logging
 
 logger = logging.getLogger(__name__)

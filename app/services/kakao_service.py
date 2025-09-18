@@ -1,5 +1,5 @@
 import httpx
-from app.config import settings
+from app import settings
 from app.schemas.kakao import KakaoUserProfile
 import logging
 
@@ -73,6 +73,48 @@ class KakaoService:
                 
             except Exception as e:
                 logger.error(f"카카오 사용자 연결 해제 실패: {str(e)}")
+                return False
+
+    async def admin_unlink_user(self, kakao_id: int) -> bool:
+        """Admin Key를 사용한 강제 사용자 연결 해제"""
+        # Admin Key 유효성 검사
+        admin_key = getattr(settings, 'KAKAO_ADMIN_KEY', '')
+        if not admin_key or admin_key.strip() == '':
+            logger.error("KAKAO_ADMIN_KEY가 설정되지 않았습니다. 환경변수를 확인하세요.")
+            raise ValueError("KAKAO_ADMIN_KEY가 설정되지 않았습니다")
+        
+        url = f"{self.KAKAO_API_HOST}/v1/user/unlink"
+        
+        headers = {
+            "Authorization": f"KakaoAK {admin_key}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        
+        data = {
+            "target_id_type": "user_id",
+            "target_id": kakao_id
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                logger.info(f"카카오 Admin API 호출: kakao_id={kakao_id}, admin_key={'*' * len(admin_key)}")
+                response = await client.post(url, headers=headers, data=data)
+                response.raise_for_status()
+                
+                result = response.json()
+                logger.info(f"카카오 관리자 권한으로 사용자 연결 해제 성공: {result.get('id')}")
+                return True
+                
+            except httpx.HTTPStatusError as e:
+                logger.error(f"카카오 Admin API 호출 실패: {e.response.status_code} - {e.response.text}")
+                if e.response.status_code == 401:
+                    raise ValueError("KAKAO_ADMIN_KEY가 유효하지 않습니다")
+                elif e.response.status_code == 404:
+                    raise ValueError("카카오 사용자를 찾을 수 없습니다")
+                else:
+                    raise ValueError(f"카카오 API 오류: {e.response.status_code}")
+            except Exception as e:
+                logger.error(f"카카오 관리자 권한 사용자 연결 해제 실패: {str(e)}")
                 return False
 
 kakao_service = KakaoService()

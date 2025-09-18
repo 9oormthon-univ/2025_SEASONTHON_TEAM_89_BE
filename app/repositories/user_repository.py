@@ -83,11 +83,11 @@ class UserRepository:
             self.db.commit()
             self.db.refresh(user)
             
-            logger.info(f"사용자 프로필 업데이트 성공: id={user.id}")
+            logger.info(f"사용자 프로필 업데이트 성공: user_id={user.user_id}")
             return user
             
         except Exception as e:
-            logger.error(f"사용자 프로필 업데이트 실패: id={user.id}, error={str(e)}")
+            logger.error(f"사용자 프로필 업데이트 실패: user_id={user.user_id}, error={str(e)}")
             self.db.rollback()
             raise
     
@@ -98,11 +98,11 @@ class UserRepository:
             self.db.commit()
             self.db.refresh(user)
             
-            logger.info(f"마지막 로그인 시간 업데이트: id={user.id}")
+            logger.info(f"마지막 로그인 시간 업데이트: user_id={user.user_id}")
             return user
             
         except Exception as e:
-            logger.error(f"마지막 로그인 시간 업데이트 실패: id={user.id}, error={str(e)}")
+            logger.error(f"마지막 로그인 시간 업데이트 실패: user_id={user.user_id}, error={str(e)}")
             self.db.rollback()
             raise
     
@@ -115,11 +115,11 @@ class UserRepository:
             self.db.commit()
             self.db.refresh(user)
             
-            logger.info(f"사용자 비활성화 성공: id={user.id}")
+            logger.info(f"사용자 비활성화 성공: user_id={user.user_id}")
             return user
             
         except Exception as e:
-            logger.error(f"사용자 비활성화 실패: id={user.id}, error={str(e)}")
+            logger.error(f"사용자 비활성화 실패: user_id={user.user_id}, error={str(e)}")
             self.db.rollback()
             raise
     

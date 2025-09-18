@@ -6,9 +6,8 @@ import datetime
 from kiwipiepy import Kiwi
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
 
-from app.schemas.check_fraud import ChatRequest, ChatResponse
+from app.schemas.check_fraud import ChatResponse
 from app.services.check_fraud_queue import CheckFraudQueue
 from app.services.check_fraud_result_dict import CheckFraudResultDict
 
@@ -21,7 +20,7 @@ _ = kiwi.tokenize("모델 로드를 위한 워밍업 문장입니다.")
 # 불완전한 단어 필터링용
 is_incomplete_kor = re.compile(r"[ㄱ-ㅎ|ㅏ-ㅣ]")
 # 특수문자 감지
-detect_sf = re.compile(r'[\?\!\.]' )
+detect_sf = re.compile(r'[\?\!\.]')
 
 check_queue = CheckFraudQueue()
 cfrd = CheckFraudResultDict()
@@ -53,8 +52,9 @@ async def websocket_endpoint(websocket: WebSocket):
         }
     }
     """
+    # 웹소켓 오픈
     await websocket.accept()
-
+    chat_data = ""
     try:
         while True:
             data = await websocket.receive_text()
@@ -68,19 +68,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "pong"}))
             elif a.get("type") == "check_fraud":
                 message = a.get("message")
-                
-                # 마지막 단어가 완벽한가? -> 형태소분석기로 문장 토크나이징 이전에
-                # 완전히 작성된 문장의 기본 조건을 확인하기 위함
-                if len(message) > 0 and is_incomplete_kor.match(message[-1]):
+
+                if len(message) <= 0:
                     await websocket.send_text("""{
                         "result": {
                             "risk_level": "정상",
                             "confidence": 1.0,
                             "detected_patterns": [],
-                            "explanation": "완성되지 않은 문장입니다.",
+                            "explanation": "빈 문장입니다.",
                             "recommended_action": ""
                         }
                     }""")
+                    continue
+                
+                # 마지막 단어가 완벽한가? -> 형태소분석기로 문장 토크나이징 이전에
+                # 완전히 작성된 문장의 기본 조건을 확인하기 위함
+                if len(message) > 0 and is_incomplete_kor.match(message[-1]):
                     continue
                 
                 # 토크나이저의 EF 감지 정확도를 높이기 위해 종결 부호가 없는 문장에 . 삽입
@@ -102,12 +105,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     if is_insert_sf and token[-1].tag == "SF":
                         token = token[:-1]
 
-                    if token[-1].tag in ["EF", "SF"]:
+                    if len(token) > 0 and token[-1].tag in ["EF", "SF"]:
                         await cfrd.create_event_for_message(message)
 
                         # 큐에 삽입
                         await check_queue.push(message)
-                        # 응답 대기                        
+                        # 응답 대기
                         res: ChatResponse = None
 
                         response_data = await cfrd.wait_for_result(message)
@@ -115,18 +118,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         if response_data is not None:
                             res = ChatResponse(result=response_data)
 
-                        await websocket.send_text(json.dumps(res.model_dump()))
+                        if res:
+                            await websocket.send_text(json.dumps(res.model_dump(), ensure_ascii=False))
+                        else:
+                            await websocket.send_text('{"type": "error", "message": "No response from LLM"}')
 
-                    else:
-                        await websocket.send_text("""{"result": {
-                                "risk_level": "정상",
-                                "confidence": 1.0,
-                                "detected_patterns": [],
-                                "explanation": "종결어미가 감지되지 않았습니다.",
-                                "recommended_action": ""
-                            }
-                        }""")
             else:
-                await websocket.send_text(json.dumps({"type": "error", "message": "Unknown message type"}))
+                await websocket.send_text('{"type": "error", "message": "Unknown message type"}')
     except WebSocketDisconnect:
         print("WebSocket disconnected")

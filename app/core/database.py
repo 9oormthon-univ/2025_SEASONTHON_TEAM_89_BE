@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from app.config import settings
+from app import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,8 @@ def test_connection():
     """데이터베이스 연결 테스트"""
     try:
         with engine.connect() as connection:
-            result = connection.execute("SELECT 1")
+            from sqlalchemy import text
+            result = connection.execute(text("SELECT 1"))
             logger.info("데이터베이스 연결 성공")
             return True
     except Exception as e:
