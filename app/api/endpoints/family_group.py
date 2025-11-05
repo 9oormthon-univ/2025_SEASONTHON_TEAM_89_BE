@@ -215,59 +215,6 @@ async def get_family_group_info(user_id: str):
     return response_data
 
 @router.get(
-    "/user/{user_id}/status",
-    status_code=status.HTTP_200_OK,
-    summary="사용자 그룹 상태 조회",
-    description="사용자의 그룹 상태를 조회"
-)
-async def get_user_group_status(user_id: str):
-    """
-    사용자 그룹 상태 조회 API
-    
-    - user_id: 사용자 ID
-    
-    Returns:
-    - 그룹 상태 정보
-    """
-    status_info = family_group_service.get_user_status(user_id)
-    return {
-        "success": True,
-        "data": status_info
-    }
-
-@router.get(
-    "/user/{user_id}/role",
-    status_code=status.HTTP_200_OK,
-    summary="사용자 그룹 역할 조회",
-    description="사용자의 그룹 내 역할(방장/참여자) 정보 조회"
-)
-async def get_user_role(user_id: str):
-    """
-    사용자 그룹 역할 조회 API
-    
-    - user_id: 사용자 ID
-    
-    Returns:
-    - 사용자의 그룹 내 역할 정보
-      - status: "in_group" | "no_group" | "error"
-      - is_creator: 방장 여부 (boolean)
-      - group_id: 그룹 ID
-      - nickname: 그룹 내 닉네임
-      - joined_at: 그룹 참여 시간
-    """
-    role_info = family_group_service.get_user_role_in_group(user_id)
-    return {
-        "success": True,
-        "data": {
-            "status": role_info["status"],
-            "is_creator": role_info["is_creator"],
-            "group_id": role_info.get("group_id"),
-            "nickname": role_info.get("nickname"),
-            "joined_at": role_info.get("joined_at")
-        }
-    }
-
-@router.get(
     "/all",
     status_code=status.HTTP_200_OK,
     summary="모든 그룹 목록 조회",

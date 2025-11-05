@@ -476,24 +476,7 @@ class FamilyGroupService:
             print(f"Error updating warning count: {e}")
         finally:
             db.close()
-    
-    def get_user_status(self, user_id: str) -> dict:
-        """사용자 상태 조회 (폴링용)"""
-        group_info = self.get_family_group_info(user_id)
-        
-        if group_info:
-            return {
-                "status": "in_group",
-                "data": group_info,
-                "last_updated": datetime.now().isoformat()
-            }
-        
-        return {
-            "status": "no_group",
-            "data": None,
-            "last_updated": datetime.now().isoformat()
-        }
-    
+
     def get_all_groups(self) -> List[dict]:
         """모든 그룹 목록 조회 (관리용)"""
         db = self._get_db()
