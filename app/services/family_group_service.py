@@ -246,7 +246,7 @@ class FamilyGroupService:
             db.close()
     
     def get_family_group_info(self, user_id: str) -> Optional[FamilyGroupInfoResponse]:
-        """사용자의 가족 그룹 정보 조회"""
+        """사용자의 가족 그룹 정보 조회 (알림 설정 포함)"""
         db = self._get_db()
         
         try:
@@ -258,13 +258,22 @@ class FamilyGroupService:
             if not user_group or not user_group.group_id:
                 return None
             
-            # 2. 그룹 정보 조회
+            # 2. 그룹 정보 조회 (is_active 상태도 함께 조회)
             group_info = db.execute(text(
-                "SELECT id, group_name, creator_id, join_code, created_at FROM family_groups WHERE id = :group_id"
+                "SELECT id, group_name, creator_id, join_code, created_at, is_active FROM family_groups WHERE id = :group_id"
             ), {"group_id": user_group.group_id}).fetchone()
             
             if not group_info:
-                return None
+                # 그룹이 삭제됨 - 사용자 테이블의 group_id도 정리
+                db.execute(text(
+                    "UPDATE users SET group_id = NULL WHERE user_id = :user_id"
+                ), {"user_id": user_id})
+                db.commit()
+                raise ValueError("GROUP_DELETED")
+            
+            # 그룹이 비활성화된 경우
+            if not group_info.is_active:
+                raise ValueError("GROUP_DISBANDED")
             
             # 3. 그룹 멤버들 조회
             members_data = db.execute(text(
@@ -282,9 +291,24 @@ class FamilyGroupService:
                 """
             ), {"group_id": group_info.id}).fetchall()
             
-            # 4. 멤버 리스트 생성
+            # 4. 요청한 사용자의 알림 설정 조회 (한 번에 모든 멤버에 대해)
+            notification_settings = {}
+            settings_data = db.execute(text("""
+                SELECT target_user_id, enabled
+                FROM notification_settings
+                WHERE user_id = :user_id
+            """), {"user_id": user_id}).fetchall()
+            
+            for setting in settings_data:
+                notification_settings[setting.target_user_id] = setting.enabled
+            
+            # 5. 멤버 리스트 생성 (알림 설정 포함)
             members = []
             for member in members_data:
+                # 자기 자신은 알림 설정이 없으므로 기본값 True
+                # 다른 멤버는 설정 조회, 없으면 기본값 True
+                notification_enabled = notification_settings.get(member.user_id, True)
+                
                 members.append(FamilyMember(
                     user_id=member.user_id,
                     nickname=member.nickname,
@@ -292,7 +316,8 @@ class FamilyGroupService:
                     warning_count=member.warning_count,
                     danger_count=member.danger_count,
                     is_creator=bool(member.is_creator),
-                    joined_at=member.joined_at
+                    joined_at=member.joined_at,
+                    notification_enabled=notification_enabled  # 알림 설정 추가
                 ))
             
             return FamilyGroupInfoResponse(

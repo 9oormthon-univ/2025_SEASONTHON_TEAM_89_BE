@@ -36,6 +36,7 @@ class FamilyMember(BaseModel):
     danger_count: int = Field(default=0, description="위험 받은 횟수")
     is_creator: bool = Field(..., description="그룹장 여부")
     joined_at: datetime = Field(..., description="그룹 참여 시간")
+    notification_enabled: bool = Field(default=True, description="이 멤버로부터의 알림 허용 여부")
 
 # 가족 그룹 정보 조회 응답
 class FamilyGroupInfoResponse(BaseModel):
