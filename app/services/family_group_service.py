@@ -51,6 +51,46 @@ class FamilyGroupService:
         finally:
             db.close()
     
+    def _sync_notification_settings(self, group_id: str, db: Session):
+        """
+        그룹 내 모든 멤버 간의 알림 설정을 동기화
+        새 멤버가 추가되거나 그룹이 생성되면 자동으로 모든 조합의 설정 생성
+        """
+        try:
+            # 1. 현재 그룹의 모든 멤버 조회
+            members = db.execute(text("""
+                SELECT user_id FROM group_members WHERE group_id = :group_id
+            """), {"group_id": group_id}).fetchall()
+            
+            member_ids = [m.user_id for m in members]
+            
+            # 2. 모든 조합에 대해 설정 생성 (자기 자신 제외)
+            for user_id in member_ids:
+                for target_user_id in member_ids:
+                    if user_id != target_user_id:
+                        # 이미 설정이 있는지 확인
+                        existing = db.execute(text("""
+                            SELECT id FROM notification_settings 
+                            WHERE user_id = :user_id AND target_user_id = :target_user_id
+                        """), {
+                            "user_id": user_id,
+                            "target_user_id": target_user_id
+                        }).fetchone()
+                        
+                        # 없으면 기본값(enabled=true)으로 생성
+                        if not existing:
+                            db.execute(text("""
+                                INSERT INTO notification_settings (user_id, target_user_id, enabled, created_at, updated_at)
+                                VALUES (:user_id, :target_user_id, TRUE, NOW(), NOW())
+                            """), {
+                                "user_id": user_id,
+                                "target_user_id": target_user_id
+                            })
+            
+        except Exception as e:
+            print(f"Error syncing notification settings: {e}")
+            raise
+    
     def create_family_group(self, request: FamilyGroupCreateRequest) -> FamilyGroupCreateResponse:
         """가족 그룹 즉시 생성"""
         db = self._get_db()
@@ -107,6 +147,9 @@ class FamilyGroupService:
                 "group_id": group_id,
                 "user_id": request.user_id
             })
+            
+            # 6. 알림 설정 동기화 (자동 생성)
+            self._sync_notification_settings(group_id, db)
             
             db.commit()
             
@@ -180,11 +223,14 @@ class FamilyGroupService:
             
             # 6. 사용자 테이블에 그룹 ID 업데이트
             db.execute(text(
-                "UPDATE users SET group_id = :group_id WHERE id = :user_id"
+                "UPDATE users SET group_id = :group_id WHERE user_id = :user_id"
             ), {
                 "group_id": group_info.id,
                 "user_id": request.user_id
             })
+            
+            # 7. 알림 설정 동기화 (새 멤버와 기존 멤버들 간의 설정 자동 생성)
+            self._sync_notification_settings(group_info.id, db)
             
             db.commit()
             
@@ -298,15 +344,28 @@ class FamilyGroupService:
                     "DELETE FROM group_members WHERE group_id = :group_id"
                 ), {"group_id": user_group.group_id})
                 
+                # 그룹과 관련된 모든 알림 설정 삭제
+                db.execute(text("""
+                    DELETE FROM notification_settings 
+                    WHERE user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
+                       OR target_user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
+                """), {"group_id": user_group.group_id})
+                
                 # 그룹 삭제
                 db.execute(text(
                     "DELETE FROM family_groups WHERE id = :group_id"
                 ), {"group_id": user_group.group_id})
             else:
                 # 4. 일반 멤버 탈퇴
+                # 해당 사용자와 관련된 알림 설정 삭제
+                db.execute(text("""
+                    DELETE FROM notification_settings 
+                    WHERE user_id = :user_id OR target_user_id = :user_id
+                """), {"user_id": user_id})
+                
                 # 사용자의 group_id를 NULL로 설정
                 db.execute(text(
-                    "UPDATE users SET group_id = NULL WHERE id = :user_id"
+                    "UPDATE users SET group_id = NULL WHERE user_id = :user_id"
                 ), {"user_id": user_id})
                 
                 # 그룹 멤버 레코드 삭제
@@ -360,7 +419,13 @@ class FamilyGroupService:
             if not target_member:
                 raise ValueError("USER_NOT_IN_GROUP")
             
-            # 4. 그룹에서 멤버 제거
+            # 4. 추방 대상과 관련된 알림 설정 삭제
+            db.execute(text("""
+                DELETE FROM notification_settings 
+                WHERE user_id = :user_id OR target_user_id = :user_id
+            """), {"user_id": request.target_user_id})
+            
+            # 5. 그룹에서 멤버 제거
             db.execute(text(
                 "DELETE FROM group_members WHERE group_id = :group_id AND user_id = :user_id"
             ), {
@@ -368,12 +433,12 @@ class FamilyGroupService:
                 "user_id": request.target_user_id
             })
             
-            # 5. 사용자 테이블에서 그룹 ID 제거
+            # 6. 사용자 테이블에서 그룹 ID 제거
             db.execute(text(
-                "UPDATE users SET group_id = NULL WHERE id = :user_id"
+                "UPDATE users SET group_id = NULL WHERE user_id = :user_id"
             ), {"user_id": request.target_user_id})
             
-            # 6. 남은 멤버 수 확인
+            # 7. 남은 멤버 수 확인
             remaining_count = db.execute(text(
                 "SELECT COUNT(*) as count FROM group_members WHERE group_id = :group_id"
             ), {"group_id": creator_group.id}).fetchone()
@@ -463,7 +528,7 @@ class FamilyGroupService:
             return []
         finally:
             db.close()
-    
+
     def get_user_role_in_group(self, user_id: str) -> dict:
         """사용자의 그룹 내 역할 정보 조회"""
         db = self._get_db()
