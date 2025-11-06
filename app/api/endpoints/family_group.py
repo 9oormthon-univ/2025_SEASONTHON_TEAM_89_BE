@@ -67,22 +67,31 @@ async def verify_group_code(request: GroupCodeVerifyRequest):
     - join_code: 참여 코드
     
     Returns:
-    - valid: 코드 유효성 (True/False)
-    - group_id: 그룹 ID (유효한 경우)
-    - group_name: 그룹 이름 (유효한 경우)
-    - creator_nickname: 그룹장 별명 (유효한 경우)
-    - current_members: 현재 멤버 수
-    - max_members: 최대 멤버 수
-    - is_full: 그룹 가득 찼는지 여부
-    - message: 결과 메시지
+    - is_valid: 코드 유효성
+    
+    Raises:
+    - 404: 유효하지 않은 참여 코드
+    - 409: 그룹 인원이 가득 참
+    - 500: 검증 오류
     """
     try:
         result = family_group_service.verify_join_code(request.join_code)
         return result
-    except Exception as e:
+    except ValueError as e:
+        error_code = str(e)
+        if error_code == "INVALID_CODE":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="유효하지 않은 참여 코드"
+            )
+        elif error_code == "GROUP_FULL":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="그룹 인원이 가득 참"
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"코드 검증 오류 : {str(e)}"
+            detail=f"코드 검증 오류: {str(e)}"
         )
 
 

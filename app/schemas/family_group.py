@@ -33,14 +33,7 @@ class GroupCodeVerifyRequest(BaseModel):
 
 # 그룹 코드 검증 응답
 class GroupCodeVerifyResponse(BaseModel):
-    valid: bool = Field(..., description="코드 유효 여부")
-    group_id: Optional[str] = Field(None, description="그룹 ID")
-    group_name: Optional[str] = Field(None, description="그룹 이름")
-    creator_nickname: Optional[str] = Field(None, description="그룹장 닉네임")
-    current_members: Optional[int] = Field(None, description="현재 멤버 수")
-    max_members: Optional[int] = Field(None, description="최대 멤버 수")
-    is_full: Optional[bool] = Field(None, description="그룹이 가득 찼는지 여부")
-    message: str = Field(..., description="결과 메시지")
+    is_valid: bool = Field(..., description="코드 유효 여부")
 
 # 가족 구성원 정보
 class FamilyMember(BaseModel):
