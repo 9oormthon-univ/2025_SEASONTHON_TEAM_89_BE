@@ -54,11 +54,20 @@ async def create_family_group(request: FamilyGroupCreateRequest):
         )
 
 @router.post(
-    "/verify-code",
+    "/verify",
     response_model=GroupCodeVerifyResponse,
     status_code=status.HTTP_200_OK,
     summary="그룹 참여 코드 검증",
-    description="그룹에 참여하기 전에 참여 코드의 유효성을 확인"
+    description="""
+    그룹에 참여하기 전에 참여 코드의 유효성을 확인
+        
+        404: 유효하지 않은 참여 코드
+
+        409: 그룹 인원이 가득 참
+
+        500: 검증 오류
+
+    """
 )
 async def verify_group_code(request: GroupCodeVerifyRequest):
     """
