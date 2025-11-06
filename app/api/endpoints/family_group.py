@@ -7,6 +7,8 @@ from app.schemas.family_group import (
     FamilyGroupInfoResponse,
     FamilyGroupKickMemberRequest,
     FamilyGroupKickMemberResponse,
+    GroupCodeVerifyRequest,
+    GroupCodeVerifyResponse,
     ErrorResponse
 )
 from app.services.family_group_service import family_group_service
@@ -50,6 +52,39 @@ async def create_family_group(request: FamilyGroupCreateRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="그룹 생성 실패"
         )
+
+@router.post(
+    "/verify-code",
+    response_model=GroupCodeVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="그룹 참여 코드 검증",
+    description="그룹에 참여하기 전에 참여 코드의 유효성을 확인"
+)
+async def verify_group_code(request: GroupCodeVerifyRequest):
+    """
+    그룹 참여 코드 검증 API
+    
+    - join_code: 참여 코드
+    
+    Returns:
+    - valid: 코드 유효성 (True/False)
+    - group_id: 그룹 ID (유효한 경우)
+    - group_name: 그룹 이름 (유효한 경우)
+    - creator_nickname: 그룹장 별명 (유효한 경우)
+    - current_members: 현재 멤버 수
+    - max_members: 최대 멤버 수
+    - is_full: 그룹 가득 찼는지 여부
+    - message: 결과 메시지
+    """
+    try:
+        result = family_group_service.verify_join_code(request.join_code)
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"코드 검증 오류 : {str(e)}"
+        )
+
 
 @router.post(
     "/join",

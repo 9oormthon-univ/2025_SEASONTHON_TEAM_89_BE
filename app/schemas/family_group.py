@@ -27,6 +27,21 @@ class FamilyGroupJoinResponse(BaseModel):
     group_id: str = Field(..., description="참여한 그룹 ID")
     joined_at: datetime = Field(..., description="참여 시간")
 
+# 그룹 코드 검증 요청
+class GroupCodeVerifyRequest(BaseModel):
+    join_code: str = Field(..., min_length=10, max_length=10, description="10자리 참여 코드")
+
+# 그룹 코드 검증 응답
+class GroupCodeVerifyResponse(BaseModel):
+    valid: bool = Field(..., description="코드 유효 여부")
+    group_id: Optional[str] = Field(None, description="그룹 ID")
+    group_name: Optional[str] = Field(None, description="그룹 이름")
+    creator_nickname: Optional[str] = Field(None, description="그룹장 닉네임")
+    current_members: Optional[int] = Field(None, description="현재 멤버 수")
+    max_members: Optional[int] = Field(None, description="최대 멤버 수")
+    is_full: Optional[bool] = Field(None, description="그룹이 가득 찼는지 여부")
+    message: str = Field(..., description="결과 메시지")
+
 # 가족 구성원 정보
 class FamilyMember(BaseModel):
     user_id: str = Field(..., description="사용자 ID")

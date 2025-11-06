@@ -20,6 +20,7 @@ from app.schemas.family_group import (
 
 class FamilyGroupService:
     # 그룹 설정 상수
+    # 이후 플랜에 따라 수정해야함
     MAX_MEMBERS = 8  # 그룹 최대 멤버 수
     
     def __init__(self):
@@ -164,6 +165,59 @@ class FamilyGroupService:
         except Exception as e:
             db.rollback()
             raise e
+        finally:
+            db.close()
+    
+    def verify_join_code(self, join_code: str) -> dict:
+        """
+        그룹 참여 코드 검증 및 그룹 정보 반환
+        참여하기 전에 그룹이 유효한지 확인
+        """
+        db = self._get_db()
+        
+        try:
+            # 1. 코드로 그룹 찾기
+            group_info = db.execute(text("""
+                SELECT 
+                    fg.id, 
+                    fg.group_name, 
+                    fg.creator_id,
+                    COUNT(gm.user_id) as current_members,
+                    u.nickname as creator_nickname
+                FROM family_groups fg
+                LEFT JOIN group_members gm ON fg.id = gm.group_id
+                LEFT JOIN group_members creator_gm ON fg.creator_id = creator_gm.user_id AND fg.id = creator_gm.group_id
+                LEFT JOIN users u ON fg.creator_id = u.user_id
+                WHERE fg.join_code = :join_code AND fg.is_active = TRUE
+                GROUP BY fg.id, fg.group_name, fg.creator_id, u.nickname
+            """), {"join_code": join_code}).fetchone()
+            
+            if not group_info:
+                return {
+                    "valid": False,
+                    "message": "유효하지 않은 참여 코드입니다"
+                }
+            
+            # 2. 그룹이 가득 찼는지 확인
+            is_full = group_info.current_members >= self.MAX_MEMBERS
+            
+            return {
+                "valid": True,
+                "group_id": group_info.id,
+                "group_name": group_info.group_name,
+                "creator_nickname": group_info.creator_nickname or "그룹장",
+                "current_members": group_info.current_members,
+                "max_members": self.MAX_MEMBERS,
+                "is_full": is_full,
+                "message": "참여 가능한 그룹입니다" if not is_full else "그룹이 가득 찼습니다"
+            }
+            
+        except Exception as e:
+            print(f"Error verifying join code: {e}")
+            return {
+                "valid": False,
+                "message": "코드 확인 오류"
+            }
         finally:
             db.close()
     
