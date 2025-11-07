@@ -1,3 +1,6 @@
+# creator : dolphin1404 (이규민)
+# 그룹 기능 엔드포인트
+
 from fastapi import APIRouter, HTTPException, status
 from app.schemas.family_group import (
     FamilyGroupCreateRequest,
@@ -60,13 +63,6 @@ async def create_family_group(request: FamilyGroupCreateRequest):
     summary="그룹 참여 코드 검증",
     description="""
     그룹에 참여하기 전에 참여 코드의 유효성을 확인
-        
-        404: 유효하지 않은 참여 코드
-
-        409: 그룹 인원이 가득 참
-
-        500: 검증 오류
-
     """
 )
 async def verify_group_code(request: GroupCodeVerifyRequest):
@@ -78,14 +74,16 @@ async def verify_group_code(request: GroupCodeVerifyRequest):
     Returns:
     - is_valid: 코드 유효성
     
+    """
+    # try:
+    result = family_group_service.verify_join_code(request.join_code)
+    return result
+    """ 검증 필요 없어서... 단순하게로만 함
     Raises:
     - 404: 유효하지 않은 참여 코드
     - 409: 그룹 인원이 가득 참
     - 500: 검증 오류
-    """
-    try:
-        result = family_group_service.verify_join_code(request.join_code)
-        return result
+
     except ValueError as e:
         error_code = str(e)
         if error_code == "INVALID_CODE":
@@ -102,7 +100,7 @@ async def verify_group_code(request: GroupCodeVerifyRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"코드 검증 오류: {str(e)}"
         )
-
+    """
 
 @router.post(
     "/join",

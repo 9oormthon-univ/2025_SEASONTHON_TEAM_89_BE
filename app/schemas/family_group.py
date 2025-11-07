@@ -29,7 +29,8 @@ class FamilyGroupJoinResponse(BaseModel):
 
 # 그룹 코드 검증 요청
 class GroupCodeVerifyRequest(BaseModel):
-    join_code: str = Field(..., min_length=10, max_length=10, description="10자리 참여 코드")
+    join_code: str = Field(..., description="참여 코드")
+    # 자릿수 제한 둘 경우 min_length=10, max_length=10 추가
 
 # 그룹 코드 검증 응답
 class GroupCodeVerifyResponse(BaseModel):

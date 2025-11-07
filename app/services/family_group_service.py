@@ -187,15 +187,17 @@ class FamilyGroupService:
                 GROUP BY fg.id
                 LIMIT 1
             """), {"join_code": join_code}).fetchone()
-            
+            # 1107 : 오류 안 올리고 단순 is_valid만 반환하는 걸로
             if not group_info:
-                raise ValueError("INVALID_CODE")
+                return{"is_valid" : False}
+                #raise ValueError("INVALID_CODE")
             
             # 그룹이 가득 찼는지 확인
             is_full = group_info.current_members >= self.MAX_MEMBERS
             
             if is_full:
-                raise ValueError("GROUP_FULL")
+                return{"is_valid" : False}
+                #raise ValueError("GROUP_FULL")
             
             # 정상 - 참여 가능
             return {
