@@ -47,6 +47,10 @@ class KakaoUnlinkResponse(BaseModel):
     success: bool = Field(..., description="연동 해제 성공 여부")
     message: str = Field(..., description="결과 메시지")
 
+class UserDeleteRequest(BaseModel):
+    """회원 탈퇴 요청"""
+    user_id: str = Field(..., description="탈퇴할 사용자 ID (UUID)")
+    
 class UserResponse(BaseModel):
     """사용자 정보 응답"""
     user_id: str = Field(..., description="사용자 ID (UUID)")

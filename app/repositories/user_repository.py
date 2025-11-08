@@ -91,6 +91,25 @@ class UserRepository:
             self.db.rollback()
             raise
     
+    def delete_user(self, user_id: str) -> bool:
+        """사용자 완전 삭제"""
+        try:
+            user = self.get_by_user_id(user_id)
+            if not user:
+                logger.warning(f"삭제할 사용자를 찾을 수 없음: user_id={user_id}")
+                return False
+            
+            self.db.delete(user)
+            self.db.commit()
+            
+            logger.info(f"사용자 삭제 성공: user_id={user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"사용자 삭제 실패: user_id={user_id}, error={str(e)}")
+            self.db.rollback()
+            raise
+    
     def update_last_login(self, user: User) -> User:
         """마지막 로그인 시간 업데이트"""
         try:
