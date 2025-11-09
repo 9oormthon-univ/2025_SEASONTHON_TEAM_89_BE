@@ -53,8 +53,13 @@ class NotificationService:
         """데이터베이스 세션 가져오기"""
         return next(self.db_dependency())
     
-    def update_notification_setting(self, request: NotificationSettingRequest) -> NotificationSettingResponse:
-        """특정 구성원에 대한 알림 설정 변경"""
+    def update_notification_setting(self, request: NotificationSettingRequest, notification_type: str = 'danger') -> NotificationSettingResponse:
+        """특정 구성원에 대한 알림 설정 변경
+        
+        Args:
+            request: 알림 설정 요청
+            notification_type: 'danger' 또는 'warning'
+        """
         db = self._get_db()
         
         try:
@@ -75,10 +80,13 @@ class NotificationService:
             if not same_group:
                 raise ValueError("USERS_NOT_IN_SAME_GROUP")
             
-            # 2. 기존 설정 확인 또는 새로 생성
+            # 2. 알림 유형에 따라 테이블 선택
+            table_name = f"{notification_type}_notification_settings"
+            
+            # 3. 기존 설정 확인 또는 새로 생성
             existing_setting = db.execute(text(
-                """
-                SELECT id FROM notification_settings 
+                f"""
+                SELECT id FROM {table_name}
                 WHERE user_id = :user_id AND target_user_id = :target_user_id
                 """
             ), {
@@ -89,8 +97,8 @@ class NotificationService:
             if existing_setting:
                 # 기존 설정 업데이트
                 db.execute(text(
-                    """
-                    UPDATE notification_settings 
+                    f"""
+                    UPDATE {table_name}
                     SET enabled = :enabled, updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = :user_id AND target_user_id = :target_user_id
                     """
@@ -102,8 +110,8 @@ class NotificationService:
             else:
                 # 새 설정 생성
                 db.execute(text(
-                    """
-                    INSERT INTO notification_settings (user_id, target_user_id, enabled)
+                    f"""
+                    INSERT INTO {table_name} (user_id, target_user_id, enabled)
                     VALUES (:user_id, :target_user_id, :enabled)
                     """
                 ), {
@@ -114,12 +122,13 @@ class NotificationService:
             
             db.commit()
             
+            type_label = "위험" if notification_type == "danger" else "경고"
             return NotificationSettingResponse(
                 success=True,
                 user_id=request.user_id,
                 target_user_id=request.target_user_id,
                 enabled=request.enabled,
-                message=f"{'활성화' if request.enabled else '비활성화'}되었습니다."
+                message=f"{type_label} 알림이 {'활성화' if request.enabled else '비활성화'}되었습니다."
             )
             
         except Exception as e:
@@ -165,15 +174,15 @@ class NotificationService:
             
             # 4. 각 구성원에게 알림 전송 (알림 설정 확인)
             for member in group_members:
-                # 알림 설정 확인 (기본값: True)
+                # 위험 알림 설정 확인 (기본값: True)
                 notification_enabled = db.execute(text(
                     """
                     SELECT COALESCE(enabled, TRUE) as enabled 
-                    FROM notification_settings 
+                    FROM danger_notification_settings
                     WHERE user_id = :user_id AND target_user_id = :target_user_id
                     """
                 ), {
-                    "user_id": member.user_id,  # member.id -> member.user_id로 수정
+                    "user_id": member.user_id,
                     "target_user_id": request.from_user_id
                 }).fetchone()
                 
@@ -189,19 +198,19 @@ class NotificationService:
                     if success:
                         sent_count += 1
                     
-                    # 알림 기록 저장
+                    # 알림 기록 저장 (notification_type = 'danger')
                     db.execute(text(
                         """
                         INSERT INTO notification_logs 
-                        (from_user_id, to_user_id, group_id, danger_type, message, sent_at)
-                        VALUES (:from_user_id, :to_user_id, :group_id, :danger_type, :message, :sent_at)
+                        (from_user_id, to_user_id, group_id, notification_type, message, sent_at)
+                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :sent_at)
                         """
                     ), {
                         "from_user_id": request.from_user_id,
                         "to_user_id": member.user_id,
                         "group_id": sender_group.group_id,
-                        "danger_type": request.danger_type,
-                        "message": request.message,
+                        "notification_type": "danger",
+                        "message": f"{request.danger_type}: {request.message or ''}",
                         "sent_at": datetime.now()
                     })
             
@@ -257,20 +266,22 @@ class NotificationService:
             return False
     
     def get_notification_settings(self, user_id: str) -> List[dict]:
-        """사용자의 모든 알림 설정 조회"""
+        """사용자의 모든 알림 설정 조회 (위험 및 경고)"""
         db = self._get_db()
         
         try:
-            # 같은 그룹의 모든 구성원에 대한 알림 설정 조회
+            # 같은 그룹의 모든 구성원에 대한 알림 설정 조회 (위험 및 경고 분리)
             settings = db.execute(text(
                 """
                 SELECT 
                     gm.user_id as target_user_id,
                     gm.nickname as target_nickname,
-                    COALESCE(ns.enabled, TRUE) as enabled
+                    COALESCE(dns.enabled, TRUE) as danger_enabled,
+                    COALESCE(wns.enabled, TRUE) as warning_enabled
                 FROM group_members gm
                 JOIN users u ON u.group_id = gm.group_id
-                LEFT JOIN notification_settings ns ON ns.user_id = :user_id AND ns.target_user_id = gm.user_id
+                LEFT JOIN danger_notification_settings dns ON dns.user_id = :user_id AND dns.target_user_id = gm.user_id
+                LEFT JOIN warning_notification_settings wns ON wns.user_id = :user_id AND wns.target_user_id = gm.user_id
                 WHERE u.user_id = :user_id AND gm.user_id != :user_id
                 ORDER BY gm.nickname
                 """
@@ -280,7 +291,8 @@ class NotificationService:
                 {
                     "target_user_id": setting.target_user_id,
                     "target_nickname": setting.target_nickname,
-                    "enabled": bool(setting.enabled)
+                    "danger_enabled": bool(setting.danger_enabled),
+                    "warning_enabled": bool(setting.warning_enabled)
                 }
                 for setting in settings
             ]
@@ -328,11 +340,11 @@ class NotificationService:
             
             # 4. 각 구성원에게 자동 알림 전송
             for member in group_members:
-                # 알림 설정 확인 (기본값: True)
+                # 위험 알림 설정 확인 (기본값: TRUE)
                 notification_enabled = db.execute(text(
                     """
                     SELECT COALESCE(enabled, TRUE) as enabled 
-                    FROM notification_settings 
+                    FROM danger_notification_settings
                     WHERE user_id = :user_id AND target_user_id = :target_user_id
                     """
                 ), {
@@ -341,32 +353,29 @@ class NotificationService:
                 }).fetchone()
                 
                 if not notification_enabled or notification_enabled.enabled:
-                    # 위험 유형 결정
-                    danger_type = "사기 탐지" if request.trigger_reason == "fraud_detection" else "위험 상황"
-                    
                     # APNs 푸시 알림 전송
                     success = await self._send_apns_notification(
                         device_token=member.device_token,
                         sender_nickname=user_info.nickname if user_info else "구성원",
-                        danger_type=danger_type,
+                        danger_type="위험 상황",
                         message=f"위험 횟수가 {request.danger_count}회로 증가했습니다"
                     )
                     
                     if success:
                         sent_count += 1
                     
-                    # 알림 기록 저장
+                    # 알림 기록 저장 (notification_type = 'danger')
                     db.execute(text(
                         """
                         INSERT INTO notification_logs 
-                        (from_user_id, to_user_id, group_id, danger_type, message, sent_at)
-                        VALUES (:from_user_id, :to_user_id, :group_id, :danger_type, :message, :sent_at)
+                        (from_user_id, to_user_id, group_id, notification_type, message, sent_at)
+                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :sent_at)
                         """
                     ), {
                         "from_user_id": request.user_id,
                         "to_user_id": member.user_id,
                         "group_id": user_group.group_id,
-                        "danger_type": f"auto_{request.trigger_reason}",
+                        "notification_type": "danger",
                         "message": f"위험 횟수 증가 (현재: {request.danger_count}회)",
                         "sent_at": notification_time
                     })
@@ -420,8 +429,7 @@ class NotificationService:
                 
                 auto_notification = AutoDangerNotificationRequest(
                     user_id=request.user_id,
-                    danger_count=request.danger_count,
-                    trigger_reason=request.trigger_reason or "manual"
+                    danger_count=request.danger_count
                 )
                 
                 loop.run_until_complete(self.send_auto_danger_notification(auto_notification))
@@ -437,7 +445,7 @@ class NotificationService:
             db.close()
     
     async def send_auto_warning_notification(self, request: AutoWarningNotificationRequest) -> DangerNotificationResponse:
-        """주의 카운트 증가 시 자동으로 그룹 내 모든 구성원에게 알림 전송"""
+        """경고 카운트 증가 시 자동으로 그룹 내 모든 구성원에게 알림 전송"""
         db = self._get_db()
         
         try:
@@ -463,7 +471,7 @@ class NotificationService:
                 "user_id": request.user_id
             }).fetchall()
             
-            # 3. 주의 증가한 사용자 정보 조회
+            # 3. 경고 증가한 사용자 정보 조회
             user_info = db.execute(text(
                 "SELECT gm.nickname FROM group_members gm WHERE gm.user_id = :user_id"
             ), {"user_id": request.user_id}).fetchone()
@@ -473,11 +481,11 @@ class NotificationService:
             
             # 4. 각 구성원에게 자동 알림 전송
             for member in group_members:
-                # 알림 설정 확인 (기본값: True)
+                # 경고 알림 설정 확인 (기본값: True)
                 notification_enabled = db.execute(text(
                     """
                     SELECT COALESCE(enabled, TRUE) as enabled 
-                    FROM notification_settings 
+                    FROM warning_notification_settings
                     WHERE user_id = :user_id AND target_user_id = :target_user_id
                     """
                 ), {
@@ -486,33 +494,30 @@ class NotificationService:
                 }).fetchone()
                 
                 if not notification_enabled or notification_enabled.enabled:
-                    # 주의 유형 결정
-                    warning_type = "사기 의심" if request.trigger_reason == "fraud_detection" else "주의 상황"
-                    
                     # APNs 푸시 알림 전송
                     success = await self._send_apns_notification(
                         device_token=member.device_token,
                         sender_nickname=user_info.nickname if user_info else "구성원",
-                        danger_type=warning_type,
-                        message=f"주의 횟수가 {request.warning_count}회로 증가했습니다"
+                        danger_type="경고 상황",
+                        message=f"경고 횟수가 {request.warning_count}회로 증가했습니다"
                     )
                     
                     if success:
                         sent_count += 1
                     
-                    # 알림 기록 저장
+                    # 알림 기록 저장 (notification_type = 'warning')
                     db.execute(text(
                         """
                         INSERT INTO notification_logs 
-                        (from_user_id, to_user_id, group_id, danger_type, message, sent_at)
-                        VALUES (:from_user_id, :to_user_id, :group_id, :danger_type, :message, :sent_at)
+                        (from_user_id, to_user_id, group_id, notification_type, message, sent_at)
+                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :sent_at)
                         """
                     ), {
                         "from_user_id": request.user_id,
                         "to_user_id": member.user_id,
                         "group_id": user_group.group_id,
-                        "danger_type": f"auto_warning_{request.trigger_reason}",
-                        "message": f"주의 횟수 증가 (현재: {request.warning_count}회)",
+                        "notification_type": "warning",
+                        "message": f"경고 횟수 증가 (현재: {request.warning_count}회)",
                         "sent_at": notification_time
                     })
             
@@ -533,11 +538,11 @@ class NotificationService:
             db.close()
     
     def update_warning_count_with_notification(self, request: UpdateWarningCountRequest) -> bool:
-        """주의 카운트 업데이트와 동시에 자동 알림 발송"""
+        """경고 카운트 업데이트와 동시에 자동 알림 발송"""
         db = self._get_db()
         
         try:
-            # 1. 현재 주의 카운트 조회
+            # 1. 현재 경고 카운트 조회
             current_count = db.execute(text(
                 "SELECT warning_count FROM users WHERE user_id = :user_id"
             ), {"user_id": request.user_id}).fetchone()
@@ -545,7 +550,7 @@ class NotificationService:
             if not current_count:
                 raise ValueError("USER_NOT_FOUND")
             
-            # 2. 주의 카운트 업데이트
+            # 2. 경고 카운트 업데이트
             db.execute(text(
                 "UPDATE users SET warning_count = :warning_count WHERE user_id = :user_id"
             ), {
@@ -565,8 +570,7 @@ class NotificationService:
                 
                 auto_notification = AutoWarningNotificationRequest(
                     user_id=request.user_id,
-                    warning_count=request.warning_count,
-                    trigger_reason=request.trigger_reason or "manual"
+                    warning_count=request.warning_count
                 )
                 
                 loop.run_until_complete(self.send_auto_warning_notification(auto_notification))

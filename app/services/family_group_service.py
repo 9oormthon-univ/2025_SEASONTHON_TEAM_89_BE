@@ -65,23 +65,40 @@ class FamilyGroupService:
             
             member_ids = [m.user_id for m in members]
             
-            # 2. 모든 조합에 대해 설정 생성 (자기 자신 제외)
+            # 2. 모든 조합에 대해 위험 및 경고 알림 설정 생성 (자기 자신 제외)
             for user_id in member_ids:
                 for target_user_id in member_ids:
                     if user_id != target_user_id:
-                        # 이미 설정이 있는지 확인
-                        existing = db.execute(text("""
-                            SELECT id FROM notification_settings 
+                        # 위험 알림 설정 확인 및 생성
+                        existing_danger = db.execute(text("""
+                            SELECT id FROM danger_notification_settings
                             WHERE user_id = :user_id AND target_user_id = :target_user_id
                         """), {
                             "user_id": user_id,
                             "target_user_id": target_user_id
                         }).fetchone()
                         
-                        # 없으면 기본값(enabled=true)으로 생성
-                        if not existing:
+                        if not existing_danger:
                             db.execute(text("""
-                                INSERT INTO notification_settings (user_id, target_user_id, enabled, created_at, updated_at)
+                                INSERT INTO danger_notification_settings (user_id, target_user_id, enabled, created_at, updated_at)
+                                VALUES (:user_id, :target_user_id, TRUE, NOW(), NOW())
+                            """), {
+                                "user_id": user_id,
+                                "target_user_id": target_user_id
+                            })
+                        
+                        # 경고 알림 설정 확인 및 생성
+                        existing_warning = db.execute(text("""
+                            SELECT id FROM warning_notification_settings
+                            WHERE user_id = :user_id AND target_user_id = :target_user_id
+                        """), {
+                            "user_id": user_id,
+                            "target_user_id": target_user_id
+                        }).fetchone()
+                        
+                        if not existing_warning:
+                            db.execute(text("""
+                                INSERT INTO warning_notification_settings (user_id, target_user_id, enabled, created_at, updated_at)
                                 VALUES (:user_id, :target_user_id, TRUE, NOW(), NOW())
                             """), {
                                 "user_id": user_id,
@@ -414,9 +431,15 @@ class FamilyGroupService:
                     "DELETE FROM group_members WHERE group_id = :group_id"
                 ), {"group_id": user_group.group_id})
                 
-                # 그룹과 관련된 모든 알림 설정 삭제
+                # 그룹과 관련된 모든 알림 설정 삭제 (위험 및 경고)
                 db.execute(text("""
-                    DELETE FROM notification_settings 
+                    DELETE FROM danger_notification_settings 
+                    WHERE user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
+                       OR target_user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
+                """), {"group_id": user_group.group_id})
+                
+                db.execute(text("""
+                    DELETE FROM warning_notification_settings 
                     WHERE user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
                        OR target_user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
                 """), {"group_id": user_group.group_id})
@@ -427,9 +450,14 @@ class FamilyGroupService:
                 ), {"group_id": user_group.group_id})
             else:
                 # 4. 일반 멤버 탈퇴
-                # 해당 사용자와 관련된 알림 설정 삭제
+                # 해당 사용자와 관련된 알림 설정 삭제 (위험 및 경고)
                 db.execute(text("""
-                    DELETE FROM notification_settings 
+                    DELETE FROM danger_notification_settings 
+                    WHERE user_id = :user_id OR target_user_id = :user_id
+                """), {"user_id": user_id})
+                
+                db.execute(text("""
+                    DELETE FROM warning_notification_settings 
                     WHERE user_id = :user_id OR target_user_id = :user_id
                 """), {"user_id": user_id})
                 
@@ -489,9 +517,14 @@ class FamilyGroupService:
             if not target_member:
                 raise ValueError("USER_NOT_IN_GROUP")
             
-            # 4. 추방 대상과 관련된 알림 설정 삭제
+            # 4. 추방 대상과 관련된 알림 설정 삭제 (위험 및 경고)
             db.execute(text("""
-                DELETE FROM notification_settings 
+                DELETE FROM danger_notification_settings 
+                WHERE user_id = :user_id OR target_user_id = :user_id
+            """), {"user_id": request.target_user_id})
+            
+            db.execute(text("""
+                DELETE FROM warning_notification_settings 
                 WHERE user_id = :user_id OR target_user_id = :user_id
             """), {"user_id": request.target_user_id})
             
