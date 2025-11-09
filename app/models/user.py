@@ -24,7 +24,7 @@ class User(Base):
     group_id = Column(String(6), nullable=True, index=True, comment="현재 속한 그룹 ID (NULL이면 그룹 없음)")
     
     # 경고/위험 횟수 분리
-    warning_count = Column(Integer, default=0, comment="주의 받은 횟수")
+    warning_count = Column(Integer, default=0, comment="경고 받은 횟수")
     danger_count = Column(Integer, default=0, comment="위험 받은 횟수")
     
     # APNs 푸시 알림

@@ -41,7 +41,7 @@ class FamilyMember(BaseModel):
     user_id: str = Field(..., description="사용자 ID")
     nickname: str = Field(..., description="그룹에서 사용하는 별명")
     profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
-    warning_count: int = Field(default=0, description="주의 받은 횟수")
+    warning_count: int = Field(default=0, description="경고 받은 횟수")
     danger_count: int = Field(default=0, description="위험 받은 횟수")
     is_creator: bool = Field(..., description="그룹장 여부")
     joined_at: datetime = Field(..., description="그룹 참여 시간")
@@ -106,22 +106,18 @@ class DangerNotificationResponse(BaseModel):
 class AutoDangerNotificationRequest(BaseModel):
     user_id: str = Field(..., description="위험 카운트가 증가한 사용자 ID")
     danger_count: int = Field(..., description="새로운 위험 카운트")
-    trigger_reason: str = Field(..., description="알림 발생 원인 (fraud_detection, manual_report 등)")
 
 # 위험 카운트 업데이트 요청
 class UpdateDangerCountRequest(BaseModel):
     user_id: str = Field(..., description="업데이트할 사용자 ID")
     danger_count: int = Field(..., description="새로운 위험 카운트")
-    trigger_reason: Optional[str] = Field("manual", description="업데이트 원인")
 
-# 주의 카운트 자동 알림 요청
+# 경고 카운트 자동 알림 요청
 class AutoWarningNotificationRequest(BaseModel):
-    user_id: str = Field(..., description="주의 카운트가 증가한 사용자 ID")
-    warning_count: int = Field(..., description="새로운 주의 카운트")
-    trigger_reason: str = Field(..., description="알림 발생 원인 (fraud_detection, manual_report 등)")
+    user_id: str = Field(..., description="경고 카운트가 증가한 사용자 ID")
+    warning_count: int = Field(..., description="새로운 경고 카운트")
 
-# 주의 카운트 업데이트 요청
+# 경고 카운트 업데이트 요청
 class UpdateWarningCountRequest(BaseModel):
     user_id: str = Field(..., description="업데이트할 사용자 ID")
-    warning_count: int = Field(..., description="새로운 주의 카운트")
-    trigger_reason: Optional[str] = Field("manual", description="업데이트 원인")
+    warning_count: int = Field(..., description="새로운 경고 카운트")

@@ -58,7 +58,7 @@ class UserResponse(BaseModel):
     nickname: str = Field(..., description="사용자 닉네임")
     profile_image: Optional[str] = Field(None, description="프로필 이미지 URL")
     group_id: Optional[str] = Field(None, description="현재 속한 그룹 ID")
-    warning_count: int = Field(default=0, description="주의 받은 횟수")
+    warning_count: int = Field(default=0, description="경고 받은 횟수")
     danger_count: int = Field(default=0, description="위험 받은 횟수")
     device_token: Optional[str] = Field(None, description="APNs 디바이스 토큰")
     is_active: bool = Field(..., description="활성 상태")
