@@ -353,11 +353,11 @@ class FamilyGroupService:
                 """
             ), {"group_id": group_info.id}).fetchall()
             
-            # 4. 요청한 사용자의 알림 설정 조회 (한 번에 모든 멤버에 대해)
+            # 4. 요청한 사용자의 위험 알림 설정 조회 (한 번에 모든 멤버에 대해)
             notification_settings = {}
             settings_data = db.execute(text("""
                 SELECT target_user_id, enabled
-                FROM notification_settings
+                FROM danger_notification_settings
                 WHERE user_id = :user_id
             """), {"user_id": user_id}).fetchall()
             
