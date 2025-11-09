@@ -264,24 +264,3 @@ async def get_family_group_info(user_id: str):
     response_data["is_creator"] = user_role["is_creator"]
     
     return response_data
-
-@router.get(
-    "/all",
-    status_code=status.HTTP_200_OK,
-    summary="모든 그룹 목록 조회",
-    description="현재 존재하는 모든 그룹의 목록을 조회 (관리용)"
-)
-async def get_all_groups():
-    """
-    모든 그룹 목록 조회 API (관리용)
-    
-    Returns:
-    - 모든 그룹 목록
-    - 각 그룹의 멤버 수
-    """
-    groups = family_group_service.get_all_groups()
-    return {
-        "success": True,
-        "count": len(groups),
-        "data": groups
-    }
