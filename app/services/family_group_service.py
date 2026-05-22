@@ -357,7 +357,7 @@ class FamilyGroupService:
             notification_settings = {}
             settings_data = db.execute(text("""
                 SELECT target_user_id, enabled
-                FROM notification_settings
+                FROM danger_notification_settings
                 WHERE user_id = :user_id
             """), {"user_id": user_id}).fetchall()
             

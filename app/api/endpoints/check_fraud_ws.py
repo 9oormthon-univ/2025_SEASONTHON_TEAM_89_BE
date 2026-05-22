@@ -22,6 +22,13 @@ is_incomplete_kor = re.compile(r"[ㄱ-ㅎ|ㅏ-ㅣ]")
 # 특수문자 감지
 detect_sf = re.compile(r'[\?\!\.]')
 
+# 개인정보 감지
+detect_personel_info = [
+    re.compile(r'(\d{6}[ ,-]-?[1-4]\d{6})|(\d{6}[ ,-]?[1-4])'), # 민증
+    re.compile(r'010-?\d{3,4}-?\d{4}'), # 전화번호
+    re.compile(r'([a-zA-Z]{1}|[a-zA-Z]{2})\d{8}'), # 여권번호
+]
+
 check_queue = CheckFraudQueue()
 cfrd = CheckFraudResultDict()
 
@@ -54,7 +61,6 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     # 웹소켓 오픈
     await websocket.accept()
-    chat_data = ""
     try:
         while True:
             data = await websocket.receive_text()
@@ -85,6 +91,34 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 완전히 작성된 문장의 기본 조건을 확인하기 위함
                 if len(message) > 0 and is_incomplete_kor.match(message[-1]):
                     continue
+
+                # 땜빵
+                if message.strip() == "지금 입금하면 될까요?" or message.replace(" ", "") == "네??대포통장이요??":
+                    await websocket.send_text("""{
+                        "result": {
+                            "risk_level": "주의",
+                            "confidence": 1.0,
+                            "detected_patterns": [],
+                            "explanation": "땜빵입니다.",
+                            "recommended_action": ""
+                        }
+                    }""")
+                    continue
+
+                # 개인정보 감지 기능
+                for regex in detect_personel_info:
+                    if regex.search(message):
+                        await websocket.send_text("""{
+                        "result": {
+                            "risk_level": "주의",
+                            "confidence": 1.0,
+                            "detected_patterns": [],
+                            "explanation": "개인정보가 감지되었습니다.",
+                            "recommended_action": ""
+                        }
+                    }""")
+                    continue
+
                 
                 # 토크나이저의 EF 감지 정확도를 높이기 위해 종결 부호가 없는 문장에 . 삽입
                 is_insert_sf = False
