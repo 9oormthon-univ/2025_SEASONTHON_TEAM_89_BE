@@ -28,6 +28,9 @@ AUTH_KEY_ID = Config.AUTH_KEY_ID
 APP_BUNDLE_ID = Config.APP_BUNDLE_ID
 IS_PRODUCTION = Config.IS_PRODUCTION
 
+# FCM (Android) - Firebase 서비스 계정 키 경로
+FIREBASE_CREDENTIALS_PATH = getattr(Config, "FIREBASE_CREDENTIALS_PATH", "")
+
 
 
 class Settings(BaseModel):
