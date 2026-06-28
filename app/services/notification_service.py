@@ -212,8 +212,8 @@ class NotificationService:
                     db.execute(text(
                         """
                         INSERT INTO notification_logs 
-                        (from_user_id, to_user_id, group_id, notification_type, message, sent_at)
-                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :sent_at)
+                        (from_user_id, to_user_id, group_id, notification_type, message, success, sent_at)
+                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :success, :sent_at)
                         """
                     ), {
                         "from_user_id": request.from_user_id,
@@ -221,6 +221,7 @@ class NotificationService:
                         "group_id": sender_group.group_id,
                         "notification_type": "danger",
                         "message": f"{request.danger_type}: {request.message or ''}",
+                        "success": success,
                         "sent_at": datetime.now()
                     })
             
@@ -428,8 +429,8 @@ class NotificationService:
                     db.execute(text(
                         """
                         INSERT INTO notification_logs 
-                        (from_user_id, to_user_id, group_id, notification_type, message, sent_at)
-                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :sent_at)
+                        (from_user_id, to_user_id, group_id, notification_type, message, success, sent_at)
+                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :success, :sent_at)
                         """
                     ), {
                         "from_user_id": request.user_id,
@@ -437,6 +438,7 @@ class NotificationService:
                         "group_id": user_group.group_id,
                         "notification_type": "danger",
                         "message": f"위험 횟수 증가 (현재: {request.danger_count}회)",
+                        "success": success,
                         "sent_at": notification_time
                     })
             
@@ -568,8 +570,8 @@ class NotificationService:
                     db.execute(text(
                         """
                         INSERT INTO notification_logs 
-                        (from_user_id, to_user_id, group_id, notification_type, message, sent_at)
-                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :sent_at)
+                        (from_user_id, to_user_id, group_id, notification_type, message, success, sent_at)
+                        VALUES (:from_user_id, :to_user_id, :group_id, :notification_type, :message, :success, :sent_at)
                         """
                     ), {
                         "from_user_id": request.user_id,
@@ -577,6 +579,7 @@ class NotificationService:
                         "group_id": user_group.group_id,
                         "notification_type": "warning",
                         "message": f"경고 횟수 증가 (현재: {request.warning_count}회)",
+                        "success": success,
                         "sent_at": notification_time
                     })
             
