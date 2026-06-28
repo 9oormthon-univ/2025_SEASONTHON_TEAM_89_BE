@@ -191,7 +191,7 @@ async def update_danger_count_with_notification(request: UpdateDangerCountReques
     - 업데이트 결과 및 알림 전송 여부
     """
     try:
-        success = notification_service.update_danger_count_with_notification(request)
+        success = await notification_service.update_danger_count_with_notification(request)
         if success:
             return {
                 "success": True,
@@ -260,7 +260,7 @@ async def update_warning_count_with_notification(request: UpdateWarningCountRequ
     - 업데이트 결과 및 알림 전송 여부
     """
     try:
-        success = notification_service.update_warning_count_with_notification(request)
+        success = await notification_service.update_warning_count_with_notification(request)
         if success:
             return {
                 "success": True,

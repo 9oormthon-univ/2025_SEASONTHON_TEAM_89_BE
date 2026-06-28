@@ -456,7 +456,7 @@ class NotificationService:
         finally:
             db.close()
     
-    def update_danger_count_with_notification(self, request: UpdateDangerCountRequest) -> bool:
+    async def update_danger_count_with_notification(self, request: UpdateDangerCountRequest) -> bool:
         """위험 카운트 업데이트와 동시에 자동 알림 발송"""
         db = self._get_db()
         
@@ -481,19 +481,16 @@ class NotificationService:
             
             # 3. 카운트가 증가했을 때만 자동 알림 발송
             if request.danger_count > current_count.danger_count:
-                import asyncio
-                
-                # 비동기 알림 발송을 동기 함수에서 실행
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
                 auto_notification = AutoDangerNotificationRequest(
                     user_id=request.user_id,
                     danger_count=request.danger_count
                 )
-                
-                loop.run_until_complete(self.send_auto_danger_notification(auto_notification))
-                loop.close()
+                # 이미 실행 중인 이벤트 루프에서 그대로 await (새 루프 생성 금지)
+                # 알림은 best-effort: 그룹 없음/전송 실패해도 카운트 업데이트는 성공 유지
+                try:
+                    await self.send_auto_danger_notification(auto_notification)
+                except Exception as e:
+                    print(f"[danger-count] 자동 알림 생략/실패(무시): {e}")
             
             return True
             
@@ -599,7 +596,7 @@ class NotificationService:
         finally:
             db.close()
     
-    def update_warning_count_with_notification(self, request: UpdateWarningCountRequest) -> bool:
+    async def update_warning_count_with_notification(self, request: UpdateWarningCountRequest) -> bool:
         """경고 카운트 업데이트와 동시에 자동 알림 발송"""
         db = self._get_db()
         
@@ -624,19 +621,16 @@ class NotificationService:
             
             # 3. 카운트가 증가했을 때만 자동 알림 발송
             if request.warning_count > current_count.warning_count:
-                import asyncio
-                
-                # 비동기 알림 발송을 동기 함수에서 실행
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
                 auto_notification = AutoWarningNotificationRequest(
                     user_id=request.user_id,
                     warning_count=request.warning_count
                 )
-                
-                loop.run_until_complete(self.send_auto_warning_notification(auto_notification))
-                loop.close()
+                # 이미 실행 중인 이벤트 루프에서 그대로 await (새 루프 생성 금지)
+                # 알림은 best-effort: 그룹 없음/전송 실패해도 카운트 업데이트는 성공 유지
+                try:
+                    await self.send_auto_warning_notification(auto_notification)
+                except Exception as e:
+                    print(f"[warning-count] 자동 알림 생략/실패(무시): {e}")
             
             return True
             
