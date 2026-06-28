@@ -3,6 +3,10 @@ config.py
 
 apple_push/
 
+# Firebase 서비스 계정 비밀키 (FCM) — 커밋 금지
+firebase/
+*firebase-adminsdk*.json
+
 #.env
 *.env
 

@@ -24,13 +24,21 @@ from app.schemas.family_group import (
 )
 # pushalarm.py와 동일한 import 방식 사용
 from app import AUTH_KEY_PATH, TEAM_ID, AUTH_KEY_ID, APP_BUNDLE_ID, IS_PRODUCTION
+# 안드로이드 FCM 송신기 + 토큰 플랫폼 판별
+from app.services.fcm_pushalarm import fcm_pusher, is_apns_token
 
 
 class NotificationService:
     def __init__(self):
         self.db_dependency = get_db
         self._init_apns_client()
-    
+        self._init_fcm_client()
+
+    def _init_fcm_client(self):
+        """FCM(firebase-admin) 초기화 - 안드로이드 푸시용. 키 없으면 비활성화."""
+        self.fcm_pusher = fcm_pusher
+        self.fcm_pusher.init()
+
     def _init_apns_client(self):
         """APNs 클라이언트 초기화 - pushalarm.py와 동일한 방식"""
         try:
@@ -188,11 +196,13 @@ class NotificationService:
                 
                 if not notification_enabled or notification_enabled.enabled:
                     # APNs 푸시 알림 전송
-                    success = await self._send_apns_notification(
+                    success = await self._send_push_notification(
                         device_token=member.device_token,
                         sender_nickname=sender_info.nickname if sender_info else "구성원",
                         danger_type=request.danger_type,
-                        message=request.message
+                        message=request.message,
+                        from_user_id=request.from_user_id,
+                        level="danger"
                     )
                     
                     if success:
@@ -235,7 +245,55 @@ class NotificationService:
         finally:
             db.close()
     
-    async def _send_apns_notification(self, device_token: str, sender_nickname: str, 
+    async def _send_push_notification(self, device_token: str, sender_nickname: str,
+                                      danger_type: str, message: Optional[str],
+                                      from_user_id: Optional[str] = None,
+                                      level: Optional[str] = None):
+        """
+        디바이스 토큰 형식으로 플랫폼을 판별해 푸시를 분기 전송한다.
+          - iOS  (순수 hex 토큰)  → APNs (기존 그대로)
+          - 안드로이드 (그 외)     → FCM (firebase-admin)
+        """
+        if is_apns_token(device_token):
+            return await self._send_apns_notification(
+                device_token=device_token,
+                sender_nickname=sender_nickname,
+                danger_type=danger_type,
+                message=message,
+            )
+        return await self._send_fcm_notification(
+            device_token=device_token,
+            sender_nickname=sender_nickname,
+            danger_type=danger_type,
+            message=message,
+            from_user_id=from_user_id,
+            level=level,
+        )
+
+    async def _send_fcm_notification(self, device_token: str, sender_nickname: str,
+                                     danger_type: str, message: Optional[str],
+                                     from_user_id: Optional[str] = None,
+                                     level: Optional[str] = None):
+        """실제 FCM(안드로이드) 푸시 전송 — APNs와 동일한 본문 구성."""
+        try:
+            # 메시지 구성 (APNs와 동일)
+            body = f"{sender_nickname}님이 {danger_type} 상황입니다."
+            if message:
+                body += f" 메시지: {message}"
+
+            success = await self.fcm_pusher.send_notification(
+                device_token=device_token,
+                body=body,
+                from_user_id=from_user_id,
+                level=level,
+            )
+            print(f"[FCM] Notification sent to {device_token}: {success}")
+            return success
+        except Exception as e:
+            print(f"[FCM] Error sending notification to {device_token}: {e}")
+            return False
+
+    async def _send_apns_notification(self, device_token: str, sender_nickname: str,
                                danger_type: str, message: Optional[str]):
         """실제 APNs 푸시 알림 전송"""
         try:
@@ -243,7 +301,7 @@ class NotificationService:
             body = f"{sender_nickname}님이 {danger_type} 상황입니다."
             if message:
                 body += f" 메시지: {message}"
-            
+
             request = NotificationRequest(
                 device_token=device_token,
                 message={
@@ -354,11 +412,13 @@ class NotificationService:
                 
                 if not notification_enabled or notification_enabled.enabled:
                     # APNs 푸시 알림 전송
-                    success = await self._send_apns_notification(
+                    success = await self._send_push_notification(
                         device_token=member.device_token,
                         sender_nickname=user_info.nickname if user_info else "구성원",
                         danger_type="위험 상황",
-                        message=f"위험 횟수가 {request.danger_count}회로 증가했습니다"
+                        message=f"위험 횟수가 {request.danger_count}회로 증가했습니다",
+                        from_user_id=request.user_id,
+                        level="danger"
                     )
                     
                     if success:
@@ -495,11 +555,13 @@ class NotificationService:
                 
                 if not notification_enabled or notification_enabled.enabled:
                     # APNs 푸시 알림 전송
-                    success = await self._send_apns_notification(
+                    success = await self._send_push_notification(
                         device_token=member.device_token,
                         sender_nickname=user_info.nickname if user_info else "구성원",
                         danger_type="경고 상황",
-                        message=f"경고 횟수가 {request.warning_count}회로 증가했습니다"
+                        message=f"경고 횟수가 {request.warning_count}회로 증가했습니다",
+                        from_user_id=request.user_id,
+                        level="warning"
                     )
                     
                     if success:
