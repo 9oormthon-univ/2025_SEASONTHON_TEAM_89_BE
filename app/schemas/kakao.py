@@ -25,8 +25,14 @@ class LoginResponse(BaseModel):
 
 # 디바이스 토큰 업데이트 스키마
 class DeviceTokenUpdateRequest(BaseModel):
-    """디바이스 토큰 업데이트 요청"""
+    """디바이스 토큰 업데이트 요청 (JWT 인증, PATCH /auth/kakao/device-token)"""
     device_token: str = Field(..., description="새로운 APNs 디바이스 토큰")
+
+# 디바이스 토큰 등록/갱신 (user_id 기반 — 클라 onNewToken)
+class DeviceTokenRegisterRequest(BaseModel):
+    """디바이스 토큰 등록/갱신 요청 (POST /auth/device-token)"""
+    user_id: str = Field(..., description="사용자 ID (UUID)")
+    device_token: str = Field(..., description="FCM/APNs 디바이스 토큰")
 
 class DeviceTokenUpdateResponse(BaseModel):
     """디바이스 토큰 업데이트 응답"""
