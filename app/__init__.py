@@ -31,6 +31,11 @@ IS_PRODUCTION = Config.IS_PRODUCTION
 # FCM (Android) - Firebase 서비스 계정 키 경로
 FIREBASE_CREDENTIALS_PATH = getattr(Config, "FIREBASE_CREDENTIALS_PATH", "")
 
+# 가족 알림 빈도 제한 (감지 N회/윈도우 이상일 때만 전송)
+ALERT_THRESHOLD = getattr(Config, "ALERT_THRESHOLD", 3)
+ALERT_WINDOW_MINUTES = getattr(Config, "ALERT_WINDOW_MINUTES", 60)
+ALERT_COOLDOWN_MINUTES = getattr(Config, "ALERT_COOLDOWN_MINUTES", 60)
+
 
 
 class Settings(BaseModel):
