@@ -282,9 +282,12 @@ class NotificationService:
             db.execute(text(
                 "UPDATE users SET danger_count = COALESCE(danger_count, 0) + 1 WHERE user_id = :user_id"
             ), {"user_id": request.from_user_id})
-            
+
             db.commit()
-            
+
+            # 발신자 본인에게도 '가족에게 알림 전송됨' 확인 푸시 (best-effort)
+            await self._notify_sender(db, request.from_user_id, "danger", sent_count)
+
             return DangerNotificationResponse(
                 success=True,
                 sent_count=sent_count,
@@ -376,6 +379,42 @@ class NotificationService:
         except Exception as e:
             print(f"[APNs] Error sending notification to {device_token}: {e}")
             return False
+
+    async def _send_self_push(self, device_token: str, body: str, level: str) -> bool:
+        """발신자 본인 기기로 확인용 푸시 (토큰 형식으로 APNs/FCM 분기, 임의 본문)."""
+        if is_apns_token(device_token):
+            try:
+                request = NotificationRequest(
+                    device_token=device_token,
+                    message={"aps": {"alert": body, "badge": 1}},
+                    notification_id=str(uuid4()),
+                    time_to_live=3,
+                    push_type=PushType.ALERT,
+                )
+                result = await self.apns_client.send_notification(request)
+                return result.is_successful
+            except Exception as e:
+                print(f"[self-alert][APNs] Error: {e}")
+                return False
+        return await self.fcm_pusher.send_notification(
+            device_token=device_token, body=body, from_user_id=None, level=f"self_{level}"
+        )
+
+    async def _notify_sender(self, db: Session, sender_user_id: str, level: str, sent_count: int):
+        """그룹원에게 알림이 나갔을 때, 발신자 본인에게도 '전송됨' 확인 푸시. (best-effort)"""
+        if sent_count <= 0:
+            return
+        try:
+            row = db.execute(text(
+                "SELECT device_token FROM users WHERE user_id = :u AND device_token IS NOT NULL"
+            ), {"u": sender_user_id}).fetchone()
+            if not row or not row.device_token:
+                return
+            level_ko = "위험" if level == "danger" else "주의"
+            body = f"가족 {sent_count}명에게 {level_ko} 알림을 보냈어요."
+            await self._send_self_push(row.device_token, body, level)
+        except Exception as e:
+            print(f"[self-alert] sender confirm failed (ignored): {e}")
     
     def get_notification_settings(self, user_id: str) -> List[dict]:
         """사용자의 모든 알림 설정 조회 (위험 및 경고)"""
@@ -494,9 +533,12 @@ class NotificationService:
                         "success": success,
                         "sent_at": notification_time
                     })
-            
+
             db.commit()
-            
+
+            # 발신자 본인에게도 '가족에게 알림 전송됨' 확인 푸시 (best-effort)
+            await self._notify_sender(db, request.user_id, "danger", sent_count)
+
             return DangerNotificationResponse(
                 success=True,
                 sent_count=sent_count,
@@ -636,9 +678,12 @@ class NotificationService:
                         "success": success,
                         "sent_at": notification_time
                     })
-            
+
             db.commit()
-            
+
+            # 발신자 본인에게도 '가족에게 알림 전송됨' 확인 푸시 (best-effort)
+            await self._notify_sender(db, request.user_id, "warning", sent_count)
+
             return DangerNotificationResponse(
                 success=True,
                 sent_count=sent_count,
