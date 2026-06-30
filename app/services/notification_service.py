@@ -6,7 +6,7 @@ APNs 푸시 알림 서비스
 
 import logging
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import uuid4
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -25,8 +25,8 @@ from app.schemas.family_group import (
 )
 # pushalarm.py와 동일한 import 방식 사용
 from app import AUTH_KEY_PATH, TEAM_ID, AUTH_KEY_ID, APP_BUNDLE_ID, IS_PRODUCTION
-# 가족 알림 빈도 제한 설정
-from app import ALERT_THRESHOLD, ALERT_WINDOW_MINUTES, ALERT_COOLDOWN_MINUTES
+# 가족 알림 빈도 제한 설정 (위험 N번에 한 번 전송)
+from app import ALERT_THRESHOLD
 # 안드로이드 FCM 송신기 + 토큰 플랫폼 판별
 from app.services.fcm_pushalarm import fcm_pusher, is_apns_token
 
@@ -65,54 +65,6 @@ class NotificationService:
     def _get_db(self) -> Session:
         """데이터베이스 세션 가져오기"""
         return next(self.db_dependency())
-
-    def _should_send_alert(self, db: Session, user_id: str, notification_type: str) -> bool:
-        """
-        감지 빈도 제한: 이번 감지를 기록하고, 윈도우 내 감지가 임계 이상이며
-        쿨다운이 지났을 때만 True(전송)를 반환한다.
-          - 기본값: ALERT_WINDOW_MINUTES(60분) 내 ALERT_THRESHOLD(3회) 이상 → 전송
-          - 한 번 보내면 ALERT_COOLDOWN_MINUTES(60분) 동안 재전송 안 함
-        판정 실패(예: detection_events 테이블 없음) 시에는 기존처럼 전송(fail-open).
-        """
-        try:
-            now = datetime.now()
-            # 1) 이번 감지 기록
-            db.execute(text(
-                "INSERT INTO detection_events (user_id, notification_type, occurred_at) "
-                "VALUES (:user_id, :type, :now)"
-            ), {"user_id": user_id, "type": notification_type, "now": now})
-            db.commit()
-
-            # 2) 윈도우 내 감지 횟수
-            window_start = now - timedelta(minutes=ALERT_WINDOW_MINUTES)
-            row = db.execute(text(
-                "SELECT COUNT(*) AS c FROM detection_events "
-                "WHERE user_id = :user_id AND notification_type = :type AND occurred_at >= :ws"
-            ), {"user_id": user_id, "type": notification_type, "ws": window_start}).fetchone()
-            count = row.c if row else 0
-
-            if count < ALERT_THRESHOLD:
-                decision, reason = False, f"{count}/{ALERT_THRESHOLD} below threshold"
-            else:
-                # 3) 쿨다운: 최근에 이미 알림을 보냈으면 스킵
-                cooldown_start = now - timedelta(minutes=ALERT_COOLDOWN_MINUTES)
-                last = db.execute(text(
-                    "SELECT MAX(sent_at) AS last_at FROM notification_logs "
-                    "WHERE from_user_id = :user_id AND notification_type = :type"
-                ), {"user_id": user_id, "type": notification_type}).fetchone()
-                if last and last.last_at and last.last_at >= cooldown_start:
-                    decision, reason = False, "in cooldown"
-                else:
-                    decision, reason = True, f"{count} in {ALERT_WINDOW_MINUTES}min -> send"
-        except Exception as e:
-            # DB 판정 실패 시에만 fail-open (로깅은 판정에 영향 주지 않음)
-            db.rollback()
-            logger.warning("[alert-throttle] check failed, fallback=send: %s", e)
-            return True
-
-        logger.info("[alert-throttle] %s user=%s: %s (send=%s)",
-                    notification_type, user_id, reason, decision)
-        return decision
 
     def update_notification_setting(self, request: NotificationSettingRequest, notification_type: str = 'danger') -> NotificationSettingResponse:
         """특정 구성원에 대한 알림 설정 변경
@@ -616,9 +568,9 @@ class NotificationService:
             
             db.commit()
             
-            # 3. 카운트가 증가했고, 빈도 제한(윈도우 내 임계 이상)을 통과할 때만 자동 알림 발송
+            # 3. 위험은 매번 보내지 않고 ALERT_THRESHOLD(기본 3)번에 한 번만 전송 (쿨다운 없음)
             if request.danger_count > current_count.danger_count and \
-                    self._should_send_alert(db, request.user_id, "danger"):
+                    request.danger_count % max(ALERT_THRESHOLD, 1) == 0:
                 auto_notification = AutoDangerNotificationRequest(
                     user_id=request.user_id,
                     danger_count=request.danger_count
