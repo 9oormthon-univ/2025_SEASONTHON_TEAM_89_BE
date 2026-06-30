@@ -71,7 +71,8 @@ class FCMPusher:
             logger.error("[FCM] 초기화 실패: %s", e)
 
     async def send_notification(self, device_token: str, body: str,
-                                from_user_id: str = None, level: str = None) -> bool:
+                                from_user_id: str = None, level: str = None,
+                                title: str = None) -> bool:
         """
         단일 안드로이드 기기로 FCM 푸시.
 
@@ -90,7 +91,7 @@ class FCMPusher:
 
         message = messaging.Message(
             token=device_token,
-            notification=messaging.Notification(title="위허메 가족 알림", body=body),
+            notification=messaging.Notification(title=title or "위허메 가족 알림", body=body),
             data=data,
             android=messaging.AndroidConfig(priority="high"),
         )
