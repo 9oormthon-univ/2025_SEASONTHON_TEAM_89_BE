@@ -17,7 +17,5 @@ class Config(object):
     # Push Alarm (FCM - Android)
     FIREBASE_CREDENTIALS_PATH = '' # Firebase 서비스 계정 .json 경로 (없으면 FCM 비활성화)
 
-    # 가족 알림 빈도 제한 (감지가 잦을 때만 보내기)
-    ALERT_THRESHOLD = 3         # 윈도우 내 감지 이 횟수 이상이면 알림 전송
-    ALERT_WINDOW_MINUTES = 60   # 감지 집계 윈도우 (분)
-    ALERT_COOLDOWN_MINUTES = 60 # 한 번 보낸 뒤 재전송 최소 간격 (분)
+    # 가족 알림 빈도 제한 (위험 N번에 한 번 전송)
+    ALERT_THRESHOLD = 3         # 위험 감지 이 횟수마다 한 번 그룹 알림 전송
