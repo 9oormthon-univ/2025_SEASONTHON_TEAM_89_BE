@@ -203,11 +203,16 @@ class NotificationService:
         db = self._get_db()
         
         try:
-            # 1. 발신자의 그룹 정보 확인
+            # 1. 발신자의 그룹 정보 확인 (그룹명 포함)
             sender_group = db.execute(text(
-                "SELECT group_id FROM users WHERE user_id = :user_id AND group_id IS NOT NULL"
+                """
+                SELECT u.group_id, fg.group_name
+                FROM users u
+                JOIN family_groups fg ON u.group_id = fg.id
+                WHERE u.user_id = :user_id AND u.group_id IS NOT NULL
+                """
             ), {"user_id": request.from_user_id}).fetchone()
-            
+
             if not sender_group:
                 raise ValueError("USER_NOT_IN_GROUP")
             
@@ -232,13 +237,19 @@ class NotificationService:
             
             sent_count = 0
             notification_time = datetime.now()
-            
+
+            # 위험 알림 문구 (2줄: 제목 / 본문)
+            sender_nickname = sender_info.nickname if sender_info else "구성원"
+            group_name = sender_group.group_name or "가족"
+            danger_title = f"{group_name}의 {sender_nickname}에게 위험이 감지되었어요"
+            danger_body = "지금 바로 연락해서 안전을 확인해 주세요."
+
             # 4. 각 구성원에게 알림 전송 (알림 설정 확인)
             for member in group_members:
                 # 위험 알림 설정 확인 (기본값: True)
                 notification_enabled = db.execute(text(
                     """
-                    SELECT COALESCE(enabled, TRUE) as enabled 
+                    SELECT COALESCE(enabled, TRUE) as enabled
                     FROM danger_notification_settings
                     WHERE user_id = :user_id AND target_user_id = :target_user_id
                     """
@@ -246,16 +257,18 @@ class NotificationService:
                     "user_id": member.user_id,
                     "target_user_id": request.from_user_id
                 }).fetchone()
-                
+
                 if not notification_enabled or notification_enabled.enabled:
-                    # APNs 푸시 알림 전송
+                    # 위험 푸시 (2줄 문구)
                     success = await self._send_push_notification(
                         device_token=member.device_token,
-                        sender_nickname=sender_info.nickname if sender_info else "구성원",
+                        sender_nickname=sender_nickname,
                         danger_type=request.danger_type,
                         message=request.message,
                         from_user_id=request.from_user_id,
-                        level="danger"
+                        level="danger",
+                        title=danger_title,
+                        body_override=danger_body,
                     )
                     
                     if success:
@@ -305,11 +318,14 @@ class NotificationService:
     async def _send_push_notification(self, device_token: str, sender_nickname: str,
                                       danger_type: str, message: Optional[str],
                                       from_user_id: Optional[str] = None,
-                                      level: Optional[str] = None):
+                                      level: Optional[str] = None,
+                                      title: Optional[str] = None,
+                                      body_override: Optional[str] = None):
         """
         디바이스 토큰 형식으로 플랫폼을 판별해 푸시를 분기 전송한다.
           - iOS  (순수 hex 토큰)  → APNs (기존 그대로)
           - 안드로이드 (그 외)     → FCM (firebase-admin)
+        title/body_override가 주어지면 그 제목/본문을 그대로 사용(2줄 알림).
         """
         if is_apns_token(device_token):
             return await self._send_apns_notification(
@@ -317,6 +333,8 @@ class NotificationService:
                 sender_nickname=sender_nickname,
                 danger_type=danger_type,
                 message=message,
+                title=title,
+                body_override=body_override,
             )
         return await self._send_fcm_notification(
             device_token=device_token,
@@ -325,24 +343,32 @@ class NotificationService:
             message=message,
             from_user_id=from_user_id,
             level=level,
+            title=title,
+            body_override=body_override,
         )
 
     async def _send_fcm_notification(self, device_token: str, sender_nickname: str,
                                      danger_type: str, message: Optional[str],
                                      from_user_id: Optional[str] = None,
-                                     level: Optional[str] = None):
-        """실제 FCM(안드로이드) 푸시 전송 — APNs와 동일한 본문 구성."""
+                                     level: Optional[str] = None,
+                                     title: Optional[str] = None,
+                                     body_override: Optional[str] = None):
+        """실제 FCM(안드로이드) 푸시 전송."""
         try:
-            # 메시지 구성 (APNs와 동일)
-            body = f"{sender_nickname}님이 {danger_type} 상황입니다."
-            if message:
-                body += f" 메시지: {message}"
+            # 메시지 구성 (body_override가 있으면 그대로 사용)
+            if body_override is not None:
+                body = body_override
+            else:
+                body = f"{sender_nickname}님이 {danger_type} 상황입니다."
+                if message:
+                    body += f" 메시지: {message}"
 
             success = await self.fcm_pusher.send_notification(
                 device_token=device_token,
                 body=body,
                 from_user_id=from_user_id,
                 level=level,
+                title=title,
             )
             print(f"[FCM] Notification sent to {device_token}: {success}")
             return success
@@ -351,19 +377,26 @@ class NotificationService:
             return False
 
     async def _send_apns_notification(self, device_token: str, sender_nickname: str,
-                               danger_type: str, message: Optional[str]):
+                               danger_type: str, message: Optional[str],
+                               title: Optional[str] = None,
+                               body_override: Optional[str] = None):
         """실제 APNs 푸시 알림 전송"""
         try:
-            # 메시지 구성
-            body = f"{sender_nickname}님이 {danger_type} 상황입니다."
-            if message:
-                body += f" 메시지: {message}"
+            # 메시지 구성 (body_override가 있으면 그대로 사용)
+            if body_override is not None:
+                body = body_override
+            else:
+                body = f"{sender_nickname}님이 {danger_type} 상황입니다."
+                if message:
+                    body += f" 메시지: {message}"
 
+            # title이 있으면 2줄(제목/본문), 없으면 단일 문자열
+            alert = {"title": title, "body": body} if title else body
             request = NotificationRequest(
                 device_token=device_token,
                 message={
                     "aps": {
-                        "alert": body,  # 단순한 문자열 형태
+                        "alert": alert,
                         "badge": 1,
                     }
                 },
@@ -459,14 +492,19 @@ class NotificationService:
         db = self._get_db()
         
         try:
-            # 1. 사용자의 그룹 정보 확인
+            # 1. 사용자의 그룹 정보 확인 (그룹명 포함)
             user_group = db.execute(text(
-                "SELECT group_id FROM users WHERE user_id = :user_id AND group_id IS NOT NULL"
+                """
+                SELECT u.group_id, fg.group_name
+                FROM users u
+                JOIN family_groups fg ON u.group_id = fg.id
+                WHERE u.user_id = :user_id AND u.group_id IS NOT NULL
+                """
             ), {"user_id": request.user_id}).fetchone()
-            
+
             if not user_group:
                 raise ValueError("USER_NOT_IN_GROUP")
-            
+
             # 2. 같은 그룹의 모든 구성원 조회 (본인 제외)
             group_members = db.execute(text(
                 """
@@ -480,7 +518,7 @@ class NotificationService:
                 "group_id": user_group.group_id,
                 "user_id": request.user_id
             }).fetchall()
-            
+
             # 3. 위험 증가한 사용자 정보 조회
             user_info = db.execute(text(
                 "SELECT gm.nickname FROM group_members gm WHERE gm.user_id = :user_id"
@@ -504,14 +542,16 @@ class NotificationService:
                 }).fetchone()
                 
                 if not notification_enabled or notification_enabled.enabled:
-                    # APNs 푸시 알림 전송
+                    # 위험 푸시 (2줄 문구: 그룹명/닉네임 제목 + 안전 확인 본문)
                     success = await self._send_push_notification(
                         device_token=member.device_token,
                         sender_nickname=user_info.nickname if user_info else "구성원",
                         danger_type="위험 상황",
                         message=f"위험 횟수가 {request.danger_count}회로 증가했습니다",
                         from_user_id=request.user_id,
-                        level="danger"
+                        level="danger",
+                        title=f"{user_group.group_name or '가족'}의 {user_info.nickname if user_info else '구성원'}에게 위험이 감지되었어요",
+                        body_override="지금 바로 연락해서 안전을 확인해 주세요.",
                     )
                     
                     if success:
@@ -721,20 +761,9 @@ class NotificationService:
             
             db.commit()
             
-            # 3. 카운트가 증가했고, 빈도 제한(윈도우 내 임계 이상)을 통과할 때만 자동 알림 발송
-            if request.warning_count > current_count.warning_count and \
-                    self._should_send_alert(db, request.user_id, "warning"):
-                auto_notification = AutoWarningNotificationRequest(
-                    user_id=request.user_id,
-                    warning_count=request.warning_count
-                )
-                # 이미 실행 중인 이벤트 루프에서 그대로 await (새 루프 생성 금지)
-                # 알림은 best-effort: 그룹 없음/전송 실패해도 카운트 업데이트는 성공 유지
-                try:
-                    await self.send_auto_warning_notification(auto_notification)
-                except Exception as e:
-                    print(f"[warning-count] 자동 알림 생략/실패(무시): {e}")
-            
+            # 3. 주의(warning)는 가족 그룹에 푸시하지 않는다 (위험만 전송).
+            #    카운트는 위에서 갱신했고, 그룹 알림은 보내지 않음.
+
             return True
             
         except Exception as e:
