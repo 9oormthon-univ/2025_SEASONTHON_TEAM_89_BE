@@ -508,7 +508,7 @@ class FamilyGroupService:
             
             # 3. 대상 사용자가 그룹에 있는지 확인
             target_member = db.execute(text(
-                "SELECT user_name FROM group_members WHERE group_id = :group_id AND user_id = :user_id"
+                "SELECT nickname FROM group_members WHERE group_id = :group_id AND user_id = :user_id"
             ), {
                 "group_id": creator_group.id,
                 "user_id": request.target_user_id
@@ -551,9 +551,9 @@ class FamilyGroupService:
             return FamilyGroupKickMemberResponse(
                 success=True,
                 kicked_user_id=request.target_user_id,
-                kicked_user_name=target_member.user_name,
+                kicked_user_name=target_member.nickname,
                 remaining_members=remaining_count.count,
-                message=f"{target_member.user_name}님이 그룹에서 제거되었습니다."
+                message=f"{target_member.nickname}님이 그룹에서 제거되었습니다."
             )
             
         except Exception as e:
