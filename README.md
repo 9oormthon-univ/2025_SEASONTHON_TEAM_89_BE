@@ -87,6 +87,12 @@ class Development(Config):
     # 로깅 설정
     LOG_LEVEL=INFO
     SQL_ECHO=false
+
+    # ML 라벨링 CSV 저장 디렉터리 (없으면 <repo>/data/ml_inbox)
+    # POST /api/ml/labeled-csv 로 수신한 라벨링 CSV(원시 바이트, BOM 보존)가 여기에 쌓인다.
+    # ml/phishing-classifier 학습 파이프라인의 import_csv.py 가 data/inbox/*.csv 를 glob 하므로,
+    # 운영 시 이 값을 그 inbox 로 지정하거나 해당 디렉터리로 rsync 한다.
+    ML_INBOX_DIR=/srv/ml/phishing-classifier/data/inbox
 ```
 
 ## Ollama 및 Gemma 3:4B 설치 가이드
