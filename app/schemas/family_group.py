@@ -66,6 +66,7 @@ class FamilyGroupKickMemberRequest(BaseModel):
 class FamilyGroupKickMemberResponse(BaseModel):
     success: bool = Field(..., description="추방 성공 여부")
     kicked_user_id: str = Field(..., description="추방된 사용자 ID")
+    kicked_user_name: Optional[str] = Field(None, description="추방된 사용자 닉네임")
     remaining_members: int = Field(..., description="남은 멤버 수")
     message: str = Field(..., description="결과 메시지")
 
