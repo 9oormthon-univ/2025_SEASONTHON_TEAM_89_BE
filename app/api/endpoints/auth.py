@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 
 from app.core.database import get_db
+from app.api.dependencies import enforce_actor, require_current_user
 from app.schemas.kakao import DeviceTokenRegisterRequest, DeviceTokenUpdateResponse
 from app.repositories.user_repository import get_user_repository
 
@@ -21,6 +22,7 @@ router = APIRouter()
 async def register_device_token(
     request: DeviceTokenRegisterRequest,
     db: Session = Depends(get_db),
+    current_user=Depends(require_current_user),
 ):
     """
     디바이스 토큰 등록/갱신 API
@@ -30,6 +32,8 @@ async def register_device_token(
 
     family_group API와 동일하게 user_id 기반(세션의 user_id 사용).
     """
+    enforce_actor(current_user, request.user_id)
+
     user_repo = get_user_repository(db)
     user = user_repo.get_by_user_id(request.user_id)
 

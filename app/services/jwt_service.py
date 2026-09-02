@@ -1,7 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import time
 from typing import Any, Union, Optional
 from jose import jwt, JWTError
 from app import settings
+from app.security import access_token_claims_are_valid
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,16 +22,21 @@ class JWTService:
         expires_delta: Optional[timedelta] = None
     ) -> str:
         """액세스 토큰 생성"""
+        user_id = data.get("user_id")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("유효한 사용자 ID가 필요합니다")
+
         to_encode = data.copy()
         
+        issued_at = datetime.now(timezone.utc)
         if expires_delta:
-            expire = datetime.utcnow() + expires_delta
+            expire = issued_at + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
+            expire = issued_at + timedelta(minutes=self.access_token_expire_minutes)
         
         to_encode.update({
             "exp": expire,
-            "iat": datetime.utcnow(),
+            "iat": issued_at,
             "type": "access"
         })
         
@@ -47,18 +54,15 @@ class JWTService:
             payload = jwt.decode(
                 token, 
                 self.secret_key, 
-                algorithms=[self.algorithm]
+                algorithms=[self.algorithm],
+                options={"require_exp": True, "require_iat": True},
             )
-            
-            # 토큰 타입 확인
-            if payload.get("type") != "access":
-                logger.warning("잘못된 토큰 타입")
-                return None
-            
-            # 만료 시간 확인 (jose에서 자동확인하지만 명시적으로 체크)
-            exp = payload.get("exp")
-            if exp and datetime.utcnow().timestamp() > exp:
-                logger.warning("만료된 토큰")
+
+            if not access_token_claims_are_valid(
+                payload,
+                time.time(),
+            ):
+                logger.warning("필수 액세스 토큰 클레임이 유효하지 않음")
                 return None
             
             logger.info(f"JWT 토큰 검증 성공: user_id={payload.get('user_id')}")
@@ -71,7 +75,7 @@ class JWTService:
             logger.error(f"토큰 검증 중 예외 발생: {str(e)}")
             return None
     
-    def get_user_id_from_token(self, token: str) -> Optional[int]:
+    def get_user_id_from_token(self, token: str) -> Optional[str]:
         """토큰에서 사용자 ID 추출"""
         payload = self.verify_token(token)
         if payload:

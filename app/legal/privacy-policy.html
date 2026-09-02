@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="위허메 안드로이드 앱 개인정보 처리방침">
+  <title>위허메 개인정보 처리방침</title>
+  <style>
+    :root {
+      --bg: #f5f8ff;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #5f6b80;
+      --line: #dce4f2;
+      --brand: #3268d8;
+      --brand-soft: #eaf1ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+      line-height: 1.72;
+      word-break: keep-all;
+    }
+    main {
+      width: min(900px, calc(100% - 32px));
+      margin: 40px auto;
+      padding: clamp(24px, 5vw, 56px);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: 0 14px 40px rgba(29, 54, 96, .08);
+    }
+    h1 { margin: 0 0 8px; font-size: clamp(2rem, 5vw, 2.7rem); line-height: 1.25; }
+    h2 { margin: 44px 0 14px; padding-top: 6px; font-size: 1.35rem; line-height: 1.4; }
+    h3 { margin: 26px 0 8px; font-size: 1.05rem; }
+    p, li { font-size: 1rem; }
+    ul { padding-left: 1.35rem; }
+    li + li { margin-top: 8px; }
+    a { color: var(--brand); text-underline-offset: 3px; }
+    .meta { margin: 0; color: var(--muted); }
+    .summary {
+      margin: 26px 0;
+      padding: 18px 20px;
+      border-radius: 14px;
+    }
+    .summary { background: var(--brand-soft); border: 1px solid #cadbff; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; }
+    th, td { padding: 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { background: #f7f9fd; font-size: .93rem; }
+    tr:last-child td { border-bottom: 0; }
+    code { padding: 2px 6px; background: #f0f3f8; border-radius: 5px; }
+    footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); }
+    @media (max-width: 560px) {
+      main { width: 100%; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+      body { background: var(--surface); }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>위허메 개인정보 처리방침</h1>
+    <p class="meta">시행일: 2026년 9월 2일 · 대상: 위허메 Android 앱(<code>com.weheome.app</code>)</p>
+  </header>
+
+  <section class="summary" aria-label="핵심 요약">
+    <strong>핵심 요약</strong>
+    <ul>
+      <li>키보드 입력 처리와 접근성 기능으로 읽은 화면 텍스트의 위험 분석은 기본적으로 기기 안에서 이루어집니다.</li>
+      <li>대화 원문은 자동으로 서버나 가족 그룹에 전송되지 않습니다.</li>
+      <li>감지 메시지 텍스트가 포함된 라벨 CSV는 사용자가 “서버로 보내기”를 누르고 전송을 한 번 더 확인한 경우에만 전송되며, 연락처·주민번호·계좌·카드·이메일·URL 같은 식별정보는 전송 전에 자동 마스킹됩니다.</li>
+      <li>계정·그룹·푸시 알림 제공을 위해 카카오 프로필, FCM 토큰, 그룹 정보, 주의·위험 누적값을 서버에서 처리합니다.</li>
+    </ul>
+  </section>
+
+  <p>위허메 운영자(이하 “운영자”)는 사용자의 개인정보를 소중히 다룹니다. 이 문서는 위허메가 어떤 정보를 어떤 목적으로 처리하는지, 사용자가 어떤 선택권을 갖는지를 설명합니다.</p>
+
+  <h2 id="on-device">1. 기기 안에서 처리하는 정보</h2>
+
+  <h3>키보드 입력</h3>
+  <p>위허메 키보드는 입력기로서 사용자가 작성하는 문자를 기기에서 조합하고 입력란에 전달합니다. 운영자는 키보드로 입력한 일반 원문을 서버로 자동 전송하지 않습니다.</p>
+
+  <h3>선택적 대화 사기 감지</h3>
+  <p>사용자가 접근성 서비스를 직접 켠 경우에만, 위허메 키보드가 화면에 표시된 동안 지원하는 메신저·문자·이메일·SNS 앱의 현재 화면 텍스트와 해당 앱 식별자를 읽습니다. 이 정보는 기관 사칭, 이체 유도, 긴급성 같은 사기 위험 신호를 분석하고 키보드에 경고를 표시하는 데 사용됩니다.</p>
+  <ul>
+    <li>접근성 서비스가 꺼져 있거나 위허메 키보드가 보이지 않는 동안에는 화면 대화를 분석하지 않습니다.</li>
+    <li>사용자는 앱에서 메신저·문자·이메일·SNS 카테고리별 감지를 끌 수 있고, Android 설정에서 접근성 서비스 전체를 언제든지 끌 수 있습니다.</li>
+    <li>위험·주의로 판단된 스니펫, 위험도, 패턴, 점수, 출처 앱, 시간, 사용자의 정확·오탐 표시가 “감지 기록”으로 기기 내부에 최대 100건 저장될 수 있습니다.</li>
+    <li>감지 기록은 앱에서 전체 삭제할 수 있고, 로그아웃·회원 탈퇴 시 기기에서 삭제됩니다. 앱 데이터 삭제 또는 앱 제거로도 남은 기기 데이터를 삭제할 수 있습니다.</li>
+    <li>사용자가 자신의 저장공간으로 직접 내보내는 CSV에는 기기의 원문 기록이 포함됩니다. 이는 사용자가 지정한 위치에만 저장되며 운영자 서버로 보내는 업로드 경로와 다릅니다.</li>
+    <li>앱 전용 데이터는 Android 클라우드 백업과 기기 간 앱 데이터 전송 대상에서 제외하도록 설정되어 있습니다.</li>
+  </ul>
+
+  <h2 id="server">2. 서버에서 수집·처리하는 정보</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>구분</th><th>항목</th><th>목적</th><th>수집 선택성</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>계정·인증</td>
+          <td>카카오 서비스 사용자 ID, 닉네임, 프로필 이미지 URL, 카카오 액세스 토큰(인증 처리), 위허메 사용자 ID·세션 정보</td>
+          <td>카카오 로그인, 계정 생성·유지, 프로필 표시</td>
+          <td>로그인 사용 시 필수. 프로필 이미지는 카카오 설정에 따라 없을 수 있음</td>
+        </tr>
+        <tr>
+          <td>푸시 알림</td>
+          <td>FCM 등록 토큰·Firebase 설치 ID, 앱 버전 및 Firebase SDK가 서비스 제공을 위해 처리하는 기기·앱 메타데이터</td>
+          <td>가족 그룹 주의·위험 알림 전달, 토큰 갱신</td>
+          <td>FCM SDK가 자동 처리. 알림 표시 권한은 사용자가 거부 가능</td>
+        </tr>
+        <tr>
+          <td>가족 그룹</td>
+          <td>그룹 ID·이름·참여 코드·구성원, 그룹 닉네임, 생성자 여부, 구성원별 알림 설정</td>
+          <td>그룹 생성·참여·관리, 구성원별 알림</td>
+          <td>그룹 기능 선택 사용 시만</td>
+        </tr>
+        <tr>
+          <td>위험 집계</td>
+          <td>사용자별 주의·위험 누적 횟수</td>
+          <td>홈 화면 집계 동기화, 그룹 구성원 경고 알림</td>
+          <td>로그인 상태에서 주의·위험 신호가 새로 기록될 때</td>
+        </tr>
+        <tr>
+          <td>선택적 라벨 CSV</td>
+          <td>전화번호·주민번호·계좌·카드·이메일·URL·일부 금액을 자동 마스킹한 감지 메시지 텍스트, 사용자 라벨, 엔진 판정, 패턴, 점수, 감지 출처, 앱 패키지명, 시간</td>
+          <td>오탐 분석과 탐지 모델 개선</td>
+          <td>감지 기록에서 사용자가 “서버로 보내기”를 선택하고 확인한 경우에만</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>서버와의 통신 과정에서 IP 주소와 요청 시간 같은 통신 메타데이터가 보안·오류 대응을 위해 호스팅 시스템에서 일시 처리될 수 있습니다. 운영자는 이를 광고 프로파일링에 사용하지 않습니다.</p>
+
+  <h2 id="family">3. 가족 그룹에 보이는 정보</h2>
+  <p>가족 그룹 기능을 사용하면 그룹 구성원은 닉네임·프로필 이미지, 그룹 내 역할, 주의·위험 누적 횟수를 볼 수 있고, 설정에 따라 새 위험 신호에 대한 알림을 받을 수 있습니다. <strong>대화 원문과 감지 스니펫은 가족 그룹에 공유하지 않습니다.</strong></p>
+
+  <h2 id="third-parties">4. 제3자 서비스와 위탁 처리</h2>
+  <ul>
+    <li><strong>카카오:</strong> 로그인과 카카오 프로필 제공. 카카오가 처리하는 정보에는 카카오의 정책이 적용됩니다.</li>
+    <li><strong>Google Firebase Cloud Messaging·Firebase Installations:</strong> 앱 설치 식별자 및 푸시 토큰 발급·메시지 전달.</li>
+    <li><strong>위허메 백엔드 및 호스팅 인프라:</strong> <code>https://wiheome.ajb.kr</code>에서 계정, 그룹, 위험 카운트, 토큰, 선택적 CSV를 처리하고 온디바이스 모델 파일을 제공합니다.</li>
+  </ul>
+  <p>운영자는 개인정보를 판매하지 않으며, 타겟 광고를 위해 제3자에게 공유하지 않습니다. 위 서비스 제공자는 인증·푸시·호스팅 같은 지정된 업무를 위해 정보를 처리할 수 있습니다.</p>
+
+  <h2 id="retention">5. 보유 및 삭제</h2>
+  <ul>
+    <li><strong>계정·프로필·그룹·FCM 토큰·위험 집계:</strong> 회원 탈퇴 또는 해당 기능 제공 목적이 달성될 때까지 보유하고 삭제합니다.</li>
+    <li><strong>사용자가 업로드한 라벨 CSV:</strong> 회원 탈퇴·삭제 요청 또는 모델 개선을 위한 검토 목적이 달성될 때까지 보유합니다. 서버 업로드 전에 식별정보를 자동 마스킹하며, 이미 개인과 연결할 수 없게 익명·집계하였거나 모델 파라미터에 반영된 결과는 특정 사용자의 기록으로 복원하지 않습니다.</li>
+    <li><strong>기기 데이터:</strong> 사용자가 앱에서 삭제하거나, Android 설정에서 앱 데이터를 삭제하거나, 앱을 제거할 때까지 기기에 남을 수 있습니다.</li>
+  </ul>
+  <p>법령상 의무, 분쟁 대응, 보안·부정 이용 방지를 위해 일부 정보를 보존해야 하는 예외적 경우에는 필요한 최소 정보만 분리 보관하고, 그 사유가 종료되면 삭제합니다.</p>
+
+  <h2 id="rights">6. 사용자의 선택권</h2>
+  <ul>
+    <li>Android 설정에서 위허메 접근성 서비스를 끄거나, 위허메 설정에서 감지 카테고리를 끌 수 있습니다.</li>
+    <li>Android 설정에서 알림 권한을 끌 수 있습니다.</li>
+    <li>감지 기록을 기기에서 삭제하거나 자신이 지정한 저장공간에 CSV로 내보낼 수 있습니다.</li>
+    <li>서버로의 라벨 CSV 전송은 선택사항이며, 취소해도 핵심 기능을 계속 사용할 수 있습니다.</li>
+    <li>앱 내 “탈퇴하기” 또는 <a href="./account-deletion.html">웹 계정 삭제 안내</a>를 통해 위허메 계정과 연결 데이터 삭제를 요청할 수 있습니다.</li>
+  </ul>
+
+  <h2 id="security">7. 보안</h2>
+  <p>앱이 제어하는 서버 통신은 HTTPS를 사용합니다. 운영자는 접근 제어, 최소 수집, 삭제 절차 같은 합리적인 보안 조치를 적용합니다. 다만 어떤 전송·저장 방식도 완전한 보안을 보장할 수는 없습니다.</p>
+
+  <h2 id="changes">8. 방침 변경</h2>
+  <p>앱의 데이터 처리 방식이 바뀌면 이 문서와 Google Play 데이터 보안 섹션을 현행화합니다. 사용자의 권리에 중요한 변경이 있는 경우 적용 전에 앱 또는 이 페이지를 통해 알립니다.</p>
+
+  <h2 id="contact">9. 문의</h2>
+  <p>개인정보, 계정 삭제, 정보 열람·정정·삭제에 대한 문의는 아래로 보내주세요.</p>
+  <ul>
+    <li>운영자: 위허메 운영자</li>
+    <li>이메일: <a href="mailto:kyumin1404@gmail.com?subject=%5B%EC%9C%84%ED%97%88%EB%A9%94%5D%20%EA%B0%9C%EC%9D%B8%EC%A0%95%EB%B3%B4%20%EB%AC%B8%EC%9D%98">kyumin1404@gmail.com</a></li>
+  </ul>
+
+  <footer>
+    <p>© 2026 위허메 운영자</p>
+  </footer>
+</main>
+</body>
+</html>

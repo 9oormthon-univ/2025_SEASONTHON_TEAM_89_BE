@@ -18,7 +18,22 @@
     <img width="1122" alt="Slice 2" src="./images/erd.png" />
 </p>
 
+## 설치
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+테스트 도구까지 설치하려면 `requirements-test.txt`를 사용합니다.
+
 ## config 가이드
+
+기본 실행에는 `app/config.py`가 필요하지 않습니다. 서버·Ollama·푸시 설정은
+환경변수에서 읽으며 비밀키와 Firebase/APNs 자격 증명 파일은 저장소 밖에 둡니다.
+기존 배포처럼 로컬 설정 파일이 필요하면 아래 형식의 ignored
+`app/config.py`를 만들 수 있으며, 이 오버라이드가 환경변수 기반 기본값보다 우선합니다.
 
 ./app/config.py 파일을 생성 후 sample_config.py 파일을 참고하여 아래 코드와 같이 작성합니다.
 
@@ -142,4 +157,3 @@ ollama create fraud-detector -f ./Modelfile
 ```sh
 python -m app
 ```
-
