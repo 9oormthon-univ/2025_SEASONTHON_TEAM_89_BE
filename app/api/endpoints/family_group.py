@@ -1,7 +1,8 @@
 # creator : dolphin1404 (이규민)
 # 그룹 기능 엔드포인트
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.api.dependencies import enforce_actor, require_current_user
 from app.schemas.family_group import (
     FamilyGroupCreateRequest,
     FamilyGroupCreateResponse,
@@ -25,7 +26,10 @@ router = APIRouter()
     summary="가족 그룹 생성",
     description="새로운 가족 그룹을 생성하고 10자리 참여 코드를 발급함"
 )
-async def create_family_group(request: FamilyGroupCreateRequest):
+async def create_family_group(
+    request: FamilyGroupCreateRequest,
+    current_user=Depends(require_current_user),
+):
     """
     가족 그룹 생성 API
     
@@ -36,6 +40,7 @@ async def create_family_group(request: FamilyGroupCreateRequest):
     Returns:
     - 생성된 그룹 정보와 10자리 참여 코드
     """
+    enforce_actor(current_user, request.user_id)
     try:
         result = family_group_service.create_family_group(request)
         return result
@@ -65,7 +70,10 @@ async def create_family_group(request: FamilyGroupCreateRequest):
     그룹에 참여하기 전에 참여 코드의 유효성을 확인
     """
 )
-async def verify_group_code(request: GroupCodeVerifyRequest):
+async def verify_group_code(
+    request: GroupCodeVerifyRequest,
+    _current_user=Depends(require_current_user),
+):
     """
     그룹 참여 코드 검증 API
     
@@ -109,7 +117,10 @@ async def verify_group_code(request: GroupCodeVerifyRequest):
     summary="가족 그룹 참여",
     description="10자리 참여 코드를 사용하여 가족 그룹에 참여"
 )
-async def join_family_group(request: FamilyGroupJoinRequest):
+async def join_family_group(
+    request: FamilyGroupJoinRequest,
+    current_user=Depends(require_current_user),
+):
     """
     가족 그룹 참여 API
     
@@ -120,6 +131,7 @@ async def join_family_group(request: FamilyGroupJoinRequest):
     Returns:
     - 참여한 그룹 정보 (그룹장 이름 포함)
     """
+    enforce_actor(current_user, request.user_id)
     try:
         result = family_group_service.join_family_group(request)
         return result
@@ -157,7 +169,10 @@ async def join_family_group(request: FamilyGroupJoinRequest):
     summary="그룹에서 멤버 추방",
     description="그룹장이 그룹에서 특정 멤버를 추방함"
 )
-async def kick_member_from_group(request: FamilyGroupKickMemberRequest):
+async def kick_member_from_group(
+    request: FamilyGroupKickMemberRequest,
+    current_user=Depends(require_current_user),
+):
     """
     그룹에서 멤버 추방 API
     
@@ -167,6 +182,7 @@ async def kick_member_from_group(request: FamilyGroupKickMemberRequest):
     Returns:
     - 추방된 사용자 정보와 남은 멤버 수
     """
+    enforce_actor(current_user, request.creator_id)
     try:
         result = family_group_service.kick_member_from_group(request)
         return result
@@ -198,7 +214,10 @@ async def kick_member_from_group(request: FamilyGroupKickMemberRequest):
     summary="가족 그룹 탈퇴",
     description="가족 그룹에서 탈퇴 -> 그룹장이 탈퇴하면 그룹이 해체됨" 
 )
-async def leave_family_group(user_id: str):
+async def leave_family_group(
+    user_id: str,
+    current_user=Depends(require_current_user),
+):
     """
     가족 그룹 탈퇴 API
     
@@ -206,6 +225,7 @@ async def leave_family_group(user_id: str):
     
     Note: 그룹장이 탈퇴하면 전체 그룹이 해체됨.
     """
+    enforce_actor(current_user, user_id)
     success = family_group_service.leave_family_group(user_id)
     if not success:
         raise HTTPException(
@@ -214,23 +234,6 @@ async def leave_family_group(user_id: str):
         )
     return {"message": "가족 그룹에서 탈퇴했습니다."}
 
-@router.put(
-    "/warning/{user_id}",
-    status_code=status.HTTP_200_OK,
-    summary="사용자 경고 횟수 업데이트",
-    description="사용자의 경고 횟수를 업데이트 (내부 시스템 호출용)"
-)
-async def update_warning_count(user_id: str, warning_count: int):
-    """
-    사용자 경고 횟수 업데이트 API (내부 시스템용)
-    
-    - user_id: 사용자 ID
-    - warning_count: 새로운 경고 횟수
-    """
-    family_group_service.update_user_warning_count(user_id, warning_count)
-    return {"message": f"사용자 {user_id}의 경고 횟수가 {warning_count}로 업데이트됨"}
-
-
 @router.get(
     "/info/{user_id}",
     response_model=FamilyGroupInfoResponse,
@@ -238,7 +241,10 @@ async def update_warning_count(user_id: str, warning_count: int):
     summary="가족 그룹 정보 조회",
     description="사용자가 속한 가족 그룹의 구성원 정보와 경고 횟수를 조회"
 )
-async def get_family_group_info(user_id: str):
+async def get_family_group_info(
+    user_id: str,
+    current_user=Depends(require_current_user),
+):
     """
     가족 그룹 정보 조회 API
     
@@ -248,6 +254,8 @@ async def get_family_group_info(user_id: str):
     - 그룹 정보, 구성원 수, 각 구성원의 이름과 경고 횟수
     - 요청한 사용자의 역할 정보 (방장/참여자)
     """
+    enforce_actor(current_user, user_id)
+
     # 1. 기본 그룹 정보 조회
     result = family_group_service.get_family_group_info(user_id)
     if result is None:

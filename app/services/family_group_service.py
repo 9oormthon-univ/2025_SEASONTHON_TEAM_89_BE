@@ -108,6 +108,24 @@ class FamilyGroupService:
         except Exception as e:
             print(f"Error syncing notification settings: {e}")
             raise
+
+    def _delete_user_relationships(self, user_id: str, db: Session) -> None:
+        """Delete any direct group and notification rows referencing one user."""
+        db.execute(text("""
+            DELETE FROM danger_notification_settings
+            WHERE user_id = :user_id OR target_user_id = :user_id
+        """), {"user_id": user_id})
+        db.execute(text("""
+            DELETE FROM warning_notification_settings
+            WHERE user_id = :user_id OR target_user_id = :user_id
+        """), {"user_id": user_id})
+        db.execute(text("""
+            DELETE FROM notification_logs
+            WHERE from_user_id = :user_id OR to_user_id = :user_id
+        """), {"user_id": user_id})
+        db.execute(text(
+            "DELETE FROM group_members WHERE user_id = :user_id"
+        ), {"user_id": user_id})
     
     def create_family_group(self, request: FamilyGroupCreateRequest) -> FamilyGroupCreateResponse:
         """가족 그룹 즉시 생성"""
@@ -398,9 +416,15 @@ class FamilyGroupService:
         finally:
             db.close()
     
-    def leave_family_group(self, user_id: str) -> bool:
-        """가족 그룹 탈퇴"""
-        db = self._get_db()
+    def leave_family_group(
+        self,
+        user_id: str,
+        db: Optional[Session] = None,
+        commit: bool = True,
+    ) -> bool:
+        """가족 그룹과 사용자 관련 알림 관계를 삭제한다."""
+        owns_session = db is None
+        db = db if db is not None else self._get_db()
         
         try:
             # 1. 사용자의 그룹 정보 확인
@@ -408,8 +432,14 @@ class FamilyGroupService:
                 "SELECT group_id FROM users WHERE user_id = :user_id"
             ), {"user_id": user_id}).fetchone()
             
-            if not user_group or not user_group.group_id:
+            if not user_group:
                 return False
+
+            if not user_group.group_id:
+                self._delete_user_relationships(user_id, db)
+                if commit:
+                    db.commit()
+                return True
             
             # 2. 그룹 정보 확인
             group_info = db.execute(text(
@@ -417,10 +447,39 @@ class FamilyGroupService:
             ), {"group_id": user_group.group_id}).fetchone()
             
             if not group_info:
-                return False
+                self._delete_user_relationships(user_id, db)
+                db.execute(text(
+                    "UPDATE users SET group_id = NULL WHERE user_id = :user_id"
+                ), {"user_id": user_id})
+                if commit:
+                    db.commit()
+                return True
             
             # 3. 그룹장이 탈퇴하는 경우 - 그룹 해체
             if group_info.creator_id == user_id:
+                # group_id를 지우기 전에 그룹 전체 알림 관계를 삭제해야 한다.
+                db.execute(text("""
+                    DELETE FROM danger_notification_settings
+                    WHERE user_id IN (
+                        SELECT user_id FROM group_members WHERE group_id = :group_id
+                    ) OR target_user_id IN (
+                        SELECT user_id FROM group_members WHERE group_id = :group_id
+                    )
+                """), {"group_id": user_group.group_id})
+
+                db.execute(text("""
+                    DELETE FROM warning_notification_settings
+                    WHERE user_id IN (
+                        SELECT user_id FROM group_members WHERE group_id = :group_id
+                    ) OR target_user_id IN (
+                        SELECT user_id FROM group_members WHERE group_id = :group_id
+                    )
+                """), {"group_id": user_group.group_id})
+
+                db.execute(text(
+                    "DELETE FROM notification_logs WHERE group_id = :group_id"
+                ), {"group_id": user_group.group_id})
+
                 # 모든 멤버의 group_id를 NULL로 설정
                 db.execute(text(
                     "UPDATE users SET group_id = NULL WHERE group_id = :group_id"
@@ -431,50 +490,22 @@ class FamilyGroupService:
                     "DELETE FROM group_members WHERE group_id = :group_id"
                 ), {"group_id": user_group.group_id})
                 
-                # 그룹과 관련된 모든 알림 설정 삭제 (위험 및 경고)
-                db.execute(text("""
-                    DELETE FROM danger_notification_settings 
-                    WHERE user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
-                       OR target_user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
-                """), {"group_id": user_group.group_id})
-                
-                db.execute(text("""
-                    DELETE FROM warning_notification_settings 
-                    WHERE user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
-                       OR target_user_id IN (SELECT user_id FROM users WHERE group_id = :group_id)
-                """), {"group_id": user_group.group_id})
-                
                 # 그룹 삭제
                 db.execute(text(
                     "DELETE FROM family_groups WHERE id = :group_id"
                 ), {"group_id": user_group.group_id})
             else:
                 # 4. 일반 멤버 탈퇴
-                # 해당 사용자와 관련된 알림 설정 삭제 (위험 및 경고)
-                db.execute(text("""
-                    DELETE FROM danger_notification_settings 
-                    WHERE user_id = :user_id OR target_user_id = :user_id
-                """), {"user_id": user_id})
-                
-                db.execute(text("""
-                    DELETE FROM warning_notification_settings 
-                    WHERE user_id = :user_id OR target_user_id = :user_id
-                """), {"user_id": user_id})
+                # 해당 사용자와 관련된 그룹 및 알림 관계 삭제
+                self._delete_user_relationships(user_id, db)
                 
                 # 사용자의 group_id를 NULL로 설정
                 db.execute(text(
                     "UPDATE users SET group_id = NULL WHERE user_id = :user_id"
                 ), {"user_id": user_id})
-                
-                # 그룹 멤버 레코드 삭제
-                db.execute(text(
-                    "DELETE FROM group_members WHERE group_id = :group_id AND user_id = :user_id"
-                ), {
-                    "group_id": user_group.group_id,
-                    "user_id": user_id
-                })
             
-            db.commit()
+            if commit:
+                db.commit()
             return True
             
         except Exception as e:
@@ -482,7 +513,8 @@ class FamilyGroupService:
             print(f"Error leaving family group: {e}")
             return False
         finally:
-            db.close()
+            if owns_session:
+                db.close()
     
     def kick_member_from_group(self, request: FamilyGroupKickMemberRequest) -> FamilyGroupKickMemberResponse:
         """그룹에서 멤버 추방 (그룹장만 가능)"""

@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app import WEB_HOST, WEB_PORT
 from app.api import routers
+from app.api.endpoints import legal
 from app.services.check_fraud import start_processing
 
 
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(legal.router)
 app.include_router(routers.router, prefix="/api")
 
 if __name__ == "__main__":

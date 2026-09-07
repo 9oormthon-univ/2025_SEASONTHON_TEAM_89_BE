@@ -3,6 +3,7 @@ import os
 from typing import Optional
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from app.security import validate_jwt_secret
 
 # .env 파일 로드
 load_dotenv()
@@ -14,7 +15,17 @@ logging.basicConfig(
 
 LOGGER = logging.getLogger(__name__)
 
-from app.config import Development as Config
+try:
+    # Keep the historical ignored local override for existing deployments.
+    from app.config import Development as Config
+except ModuleNotFoundError as error:
+    # Only fall back when app.config itself is absent. Missing imports inside an
+    # existing override remain startup errors instead of being silently hidden.
+    if error.name != "app.config":
+        raise
+    from app.sample_config import Config
+
+    LOGGER.info("app/config.py not found; using environment-backed sample_config")
 
 WEB_HOST = Config.WEB_HOST
 WEB_PORT = Config.WEB_PORT
@@ -34,6 +45,9 @@ FIREBASE_CREDENTIALS_PATH = getattr(Config, "FIREBASE_CREDENTIALS_PATH", "")
 # 가족 알림 빈도 제한 (위험 N번에 한 번 전송)
 ALERT_THRESHOLD = getattr(Config, "ALERT_THRESHOLD", 3)
 
+
+
+INSECURE_JWT_FALLBACK = "WatchOut_super_secret_key_2025_production_change_this"
 
 
 class Settings(BaseModel):
@@ -71,7 +85,7 @@ class Settings(BaseModel):
     KAKAO_REDIRECT_URI: str = os.getenv("KAKAO_REDIRECT_URI", "http://wiheome.ajb.kr/api/kakao/callback")
     
     # JWT 설정 (WatchOut) 
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "WatchOut_super_secret_key_2025_production_change_this")
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", INSECURE_JWT_FALLBACK)
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))  # 30일
     
@@ -104,3 +118,14 @@ class Settings(BaseModel):
         env_file = ".env"
 
 settings = Settings()
+
+
+def _validate_jwt_settings() -> None:
+    validate_jwt_secret(
+        settings.ENVIRONMENT,
+        settings.JWT_SECRET_KEY,
+        INSECURE_JWT_FALLBACK,
+    )
+
+
+_validate_jwt_settings()

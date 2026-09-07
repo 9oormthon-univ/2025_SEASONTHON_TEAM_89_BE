@@ -91,7 +91,7 @@ class UserRepository:
             self.db.rollback()
             raise
     
-    def delete_user(self, user_id: str) -> bool:
+    def delete_user(self, user_id: str, commit: bool = True) -> bool:
         """사용자 완전 삭제"""
         try:
             user = self.get_by_user_id(user_id)
@@ -100,7 +100,10 @@ class UserRepository:
                 return False
             
             self.db.delete(user)
-            self.db.commit()
+            if commit:
+                self.db.commit()
+            else:
+                self.db.flush()
             
             logger.info(f"사용자 삭제 성공: user_id={user_id}")
             return True

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.core.database import get_db
+from app.api.dependencies import enforce_actor, require_current_user
 from app.schemas.kakao import (
     KakaoTokenLoginRequest,
     LoginResponse, 
@@ -9,14 +10,12 @@ from app.schemas.kakao import (
     KakaoUserProfile,
     DeviceTokenUpdateRequest,
     DeviceTokenUpdateResponse,
-    KakaoUnlinkRequest,
-    KakaoAdminUnlinkRequest,
-    KakaoUnlinkResponse,
     UserDeleteRequest,
 )
 from app.services.kakao_service import kakao_service
 from app.services.jwt_service import jwt_service
 from app.services.family_group_service import family_group_service
+from app.services.ml_data_storage import delete_user_labeled_csv_files
 from app.repositories.user_repository import get_user_repository
 from app import settings
 import logging
@@ -82,13 +81,12 @@ async def kakao_login_with_token(
         logger.error(f"카카오 로그인 처리 중 서버 오류: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"로그인 처리 실패: {str(e)}"
+            detail="로그인 처리 실패"
         )
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user(
-    token: str,
-    db: Session = Depends(get_db)
+    current_user=Depends(require_current_user),
 ):
     """
     현재 로그인한 사용자 정보 조회
@@ -96,27 +94,7 @@ async def get_current_user(
     JWT 토큰을 사용하여 현재 사용자의 정보를 반환
     """
     try:
-        # JWT 토큰 검증
-        payload = jwt_service.verify_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="유효하지 않은 토큰",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # 사용자 조회
-        user_id = payload.get("user_id")
-        user_repo = get_user_repository(db)
-        user = user_repo.get_by_user_id(user_id)
-        
-        if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="사용자를 찾을 수 없음"
-            )
-        
-        return UserResponse.from_orm(user)
+        return UserResponse.from_orm(current_user)
         
     except HTTPException:
         raise
@@ -131,7 +109,8 @@ async def get_current_user(
 @router.delete("/delete", status_code=status.HTTP_200_OK)
 async def delete_user(
     request: UserDeleteRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_current_user),
 ):
     """
     회원 탈퇴
@@ -144,6 +123,7 @@ async def delete_user(
     - 성공 시 200 OK만
     - 실패 시 HTTP 에러 코드
     """
+    enforce_actor(current_user, request.user_id)
     try:
         user_repo = get_user_repository(db)
         
@@ -157,68 +137,72 @@ async def delete_user(
         
         logger.info(f"회원 탈퇴 시작: user_id={request.user_id}, kakao_id={user.kakao_id}")
         
-        # 2. 가족 그룹 탈퇴 (속해있는 경우)
-        if user.group_id:
-            logger.info(f"가족 그룹 탈퇴 시도: user_id={request.user_id}, group_id={user.group_id}")
-            group_leave_success = family_group_service.leave_family_group(request.user_id)
-            if group_leave_success:
-                logger.info(f"가족 그룹 탈퇴 성공: user_id={request.user_id}")
-            else:
-                logger.warning(f"가족 그룹 탈퇴 실패 : user_id={request.user_id}")
-        
-        # 3. 카카오 앱 연동 해제 (Admin Key 사용) - 실패 시 에러 반환
-        logger.info(f"카카오 앱 연동 해제 시도: kakao_id={user.kakao_id}")
-        kakao_unlink_success = await kakao_service.admin_unlink_user(int(user.kakao_id))
-        if not kakao_unlink_success:
+        # 2. 사용자가 업로드한 ML 라벨링 원본 삭제. 실패하면 계정 DB 변경 전에 중단한다.
+        deleted_csv_count = delete_user_labeled_csv_files(request.user_id)
+        logger.info(
+            f"회원 탈퇴 ML CSV 삭제 완료: user_id={request.user_id}, count={deleted_csv_count}"
+        )
+
+        # 3. 가족 그룹 및 알림 관계 삭제. 그룹이 없어도 고아 알림 관계를 정리한다.
+        logger.info(
+            f"가족 그룹 관계 삭제 시도: user_id={request.user_id}, group_id={user.group_id}"
+        )
+        group_leave_success = family_group_service.leave_family_group(
+            request.user_id,
+            db=db,
+            commit=False,
+        )
+        if not group_leave_success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="카카오 앱 연동 해제 실패"
+                detail="가족 그룹 관계 삭제에 실패했습니다"
             )
-        logger.info(f"카카오 앱 연동 해제 성공: kakao_id={user.kakao_id}")
-        
+        logger.info(f"가족 그룹 관계 삭제 성공: user_id={request.user_id}")
+
         # 4. 사용자 데이터 삭제
-        delete_success = user_repo.delete_user(request.user_id)
+        kakao_id = str(user.kakao_id)
+        delete_success = user_repo.delete_user(request.user_id, commit=False)
         if not delete_success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="사용자 데이터 삭제에 실패했습니다"
             )
-        
+        db.commit()
+
+        # 5. 외부 카카오 연동 해제는 로컬 계정 삭제를 막지 않는 후속 정리로 처리한다.
+        try:
+            logger.info(f"카카오 앱 연동 해제 시도: kakao_id={kakao_id}")
+            kakao_unlink_success = await kakao_service.admin_unlink_user(int(kakao_id))
+            if kakao_unlink_success:
+                logger.info(f"카카오 앱 연동 해제 성공: kakao_id={kakao_id}")
+            else:
+                logger.warning(f"카카오 앱 연동 해제 실패: kakao_id={kakao_id}")
+        except Exception as unlink_error:
+            logger.warning(
+                "카카오 앱 연동 해제 후속 처리 실패: kakao_id=%s, error=%s",
+                kakao_id,
+                str(unlink_error),
+            )
+
         logger.info(f"회원 탈퇴 완료: user_id={request.user_id}")
         # 200 OK만 반환
         
     except HTTPException:
+        db.rollback()
         raise
-    except ValueError as e:
-        # 카카오 연동 해제 관련 에러 처리
-        error_msg = str(e)
-        if "KAKAO_ADMIN_KEY" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="서버 설정 오류: 카카오 관리자 키 문제"
-            )
-        elif "카카오 사용자를 찾을 수 없습니다" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="카카오에서 사용자를 찾을 수 없음"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"카카오 연동 해제 실패: {error_msg}"
-            )
     except Exception as e:
+        db.rollback()
         logger.error(f"회원 탈퇴 처리 중 오류: user_id={request.user_id}, error={str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"회원 탈퇴 처리 실패: {str(e)}"
+            detail="회원 탈퇴 처리 실패"
         )
 
 @router.patch("/device-token", response_model=DeviceTokenUpdateResponse)
 async def update_device_token(
     request: DeviceTokenUpdateRequest,
-    token: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(require_current_user),
 ):
     """
     디바이스 토큰 업데이트
@@ -226,34 +210,14 @@ async def update_device_token(
     APNs 푸시 알림을 받기 위한 디바이스 토큰을 업데이트
     """
     try:
-        # JWT 토큰 검증
-        payload = jwt_service.verify_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="유효하지 않은 토큰",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # 사용자 조회
-        user_id = payload.get("user_id")
-        user_repo = get_user_repository(db)
-        user = user_repo.get_by_user_id(user_id)
-        
-        if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="사용자를 찾을 수 없음"
-            )
-        
         # 디바이스 토큰 업데이트
-        user.device_token = request.device_token
-        user.updated_at = datetime.utcnow()
+        current_user.device_token = request.device_token
+        current_user.updated_at = datetime.utcnow()
         
         db.commit()
-        db.refresh(user)
+        db.refresh(current_user)
         
-        logger.info(f"디바이스 토큰 업데이트 성공: user_id={user_id}")
+        logger.info(f"디바이스 토큰 업데이트 성공: user_id={current_user.user_id}")
         
         return DeviceTokenUpdateResponse(
             success=True,
@@ -267,97 +231,4 @@ async def update_device_token(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="디바이스 토큰 업데이트 실패"
-        )
-
-@router.post("/unlink", response_model=KakaoUnlinkResponse)
-async def kakao_unlink(
-    request: KakaoUnlinkRequest
-):
-    """
-    카카오 앱 연동 해제
-    
-    동의화면을 다시 보기 위해 카카오 서버에서 앱 연동을 해제
-    """
-    try:
-        # 카카오 서버에서 앱 연동 해제
-        logger.info("카카오 앱 연동 해제 요청")
-        success = await kakao_service.unlink_user(request.access_token)
-        
-        if success:
-            logger.info("카카오 앱 연동 해제 성공")
-            return KakaoUnlinkResponse(
-                success=True,
-                message="카카오 앱 연동이 성공적으로 해제되었습니다. 다음 로그인에서 동의화면이 나타납니다."
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="카카오 앱 연동 해제에 실패했습니다"
-            )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"카카오 앱 연동 해제 중 오류: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"앱 연동 해제 실패: {str(e)}"
-        )
-
-@router.post("/admin-unlink", response_model=KakaoUnlinkResponse)
-async def kakao_admin_unlink(
-    request: KakaoAdminUnlinkRequest
-):
-    """
-    카카오 관리자 권한으로 앱 연동 해제
-    
-    Admin Key를 사용하여 특정 사용자의 앱 연동을 강제로 해제함
-    개발/테스트 환경에서만 사용 부탁
-    """
-    try:
-        # 카카오 서버에서 관리자 권한으로 앱 연동 해제
-        logger.info(f"카카오 관리자 권한 앱 연동 해제 요청: kakao_id={request.kakao_id}")
-        success = await kakao_service.admin_unlink_user(request.kakao_id)
-        
-        if success:
-            logger.info(f"카카오 관리자 권한 앱 연동 해제 성공: kakao_id={request.kakao_id}")
-            return KakaoUnlinkResponse(
-                success=True,
-                message=f"카카오 사용자 {request.kakao_id}의 앱 연동이 관리자 권한으로 해제되었습니다."
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="카카오 관리자 권한 앱 연동 해제에 실패했습니다"
-            )
-        
-    except HTTPException:
-        raise
-    except ValueError as e:
-        error_msg = str(e)
-        if "KAKAO_ADMIN_KEY가 설정되지 않았습니다" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="서버 설정 오류: 카카오 관리자 키가 설정되지 않았습니다"
-            )
-        elif "KAKAO_ADMIN_KEY가 유효하지 않습니다" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="카카오 관리자 키가 유효하지 않습니다"
-            )
-        elif "카카오 사용자를 찾을 수 없습니다" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"카카오 사용자 ID {request.kakao_id}를 찾을 수 없습니다"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-    except Exception as e:
-        logger.error(f"카카오 관리자 권한 앱 연동 해제 중 오류: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"관리자 권한 앱 연동 해제 실패: {str(e)}"
         )
