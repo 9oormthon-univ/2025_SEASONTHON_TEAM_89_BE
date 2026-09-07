@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Union
@@ -42,8 +43,20 @@ def save_user_labeled_csv(
         raise ValueError("resolved upload path escaped ML_INBOX_DIR")
 
     # A timestamp collision must not overwrite an earlier user's training data.
-    with filepath.open("xb") as file:
-        file.write(body)
+    # Publish only complete CSVs. Hard-link creation preserves collision rejection.
+    with tempfile.NamedTemporaryFile(dir=inbox, suffix=".pending", delete=False) as file:
+        pending = Path(file.name)
+        try:
+            file.write(body)
+            file.flush()
+            os.fsync(file.fileno())
+        except BaseException:
+            pending.unlink(missing_ok=True)
+            raise
+    try:
+        os.link(pending, filepath)
+    finally:
+        pending.unlink(missing_ok=True)
     return filename, filepath
 
 

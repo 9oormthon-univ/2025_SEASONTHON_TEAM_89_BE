@@ -157,3 +157,9 @@ ollama create fraud-detector -f ./Modelfile
 ```sh
 python -m app
 ```
+
+## Android 모델 배포와 자동 학습
+
+서버 PC에서 pull 후 최초 설치·실행 절차는 [모델 배포 가이드](docs/model-deployment.md)를 참고하세요.
+모델 다운로드 API는 기존 FastAPI에 연결되며, 초기 모델은 별도 GitHub 릴리스에서 설치합니다.
+사용자 감지 기록·학습 데이터는 공개 저장소에 올리지 않습니다.

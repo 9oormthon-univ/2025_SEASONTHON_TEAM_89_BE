@@ -1,0 +1,16 @@
+# 학습 (GPU 권장)
+torch>=2.2
+transformers>=4.44
+datasets>=2.20
+evaluate>=0.4
+scikit-learn>=1.4
+accelerate>=0.33
+
+# 내보내기 (온디바이스)
+optimum[exporters]>=1.21      # ONNX export
+onnx>=1.16
+onnxruntime>=1.18
+# TFLite export 경로(택1):
+#   - optimum-cli export tflite ...
+#   - ai-edge-torch (PyTorch → LiteRT 직접 변환, 별도 설치)
+# generate_synthetic.py / prepare_data.py 는 표준 라이브러리만 쓰므로 위 의존성 불필요.
