@@ -61,6 +61,9 @@ def clean_rows(rows: list[dict]) -> list[dict]:
 def read_feedback(inbox: Path) -> list[dict]:
     labels: dict[str, set[str]] = {}
     for path in sorted(inbox.glob("*.csv")):
+        # Defense in depth if an operator accidentally copies a quarantined test upload here.
+        if path.name.startswith("test-account-"):
+            continue
         # Avoid files still being written by the backend; the next timer will pick them up.
         if path.is_symlink() or time.time() - path.stat().st_mtime < 5:
             continue

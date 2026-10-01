@@ -29,6 +29,9 @@ from app import AUTH_KEY_PATH, TEAM_ID, AUTH_KEY_ID, APP_BUNDLE_ID, IS_PRODUCTIO
 from app import ALERT_THRESHOLD
 # 안드로이드 FCM 송신기 + 토큰 플랫폼 판별
 from app.services.fcm_pushalarm import fcm_pusher, is_apns_token
+from app.services.test_account_boundary import (
+    ensure_actor_group, ensure_pair_domain, isolated_recipients, recipient_token_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,10 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
+            ensure_pair_domain(db, request.user_id, request.target_user_id)
+            if notification_type not in {"danger", "warning"}:
+                raise ValueError("INVALID_NOTIFICATION_TYPE")
             # 1. 두 사용자가 같은 그룹에 속해있는지 확인
             same_group = db.execute(text(
                 """
@@ -155,6 +162,7 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.from_user_id)
             # 1. 발신자의 그룹 정보 확인 (그룹명 포함)
             sender_group = db.execute(text(
                 """
@@ -197,7 +205,7 @@ class NotificationService:
             danger_body = "지금 바로 연락해서 안전을 확인해 주세요."
 
             # 4. 각 구성원에게 알림 전송 (알림 설정 확인)
-            for member in group_members:
+            for member in isolated_recipients(db, request.from_user_id, group_members):
                 # 위험 알림 설정 확인 (기본값: True)
                 notification_enabled = db.execute(text(
                     """
@@ -390,10 +398,13 @@ class NotificationService:
         if sent_count <= 0:
             return
         try:
+            ensure_actor_group(db, sender_user_id)
             row = db.execute(text(
                 "SELECT device_token FROM users WHERE user_id = :u AND device_token IS NOT NULL"
             ), {"u": sender_user_id}).fetchone()
             if not row or not row.device_token:
+                return
+            if not recipient_token_allowed(db, sender_user_id, row.device_token):
                 return
             level_ko = "위험" if level == "danger" else "주의"
             body = f"가족 {sent_count}명에게 {level_ko} 알림을 보냈어요."
@@ -406,6 +417,7 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, user_id)
             # 같은 그룹의 모든 구성원에 대한 알림 설정 조회 (위험 및 경고 분리)
             settings = db.execute(text(
                 """
@@ -444,6 +456,7 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
             # 1. 사용자의 그룹 정보 확인 (그룹명 포함)
             user_group = db.execute(text(
                 """
@@ -480,7 +493,7 @@ class NotificationService:
             notification_time = datetime.now()
             
             # 4. 각 구성원에게 자동 알림 전송
-            for member in group_members:
+            for member in isolated_recipients(db, request.user_id, group_members):
                 # 위험 알림 설정 확인 (기본값: TRUE)
                 notification_enabled = db.execute(text(
                     """
@@ -550,6 +563,7 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
             # 1 현재 위험 카운트 조회
             current_count = db.execute(text(
                 "SELECT danger_count FROM users WHERE user_id = :user_id"
@@ -596,6 +610,7 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
             # 1. 사용자의 그룹 정보 확인
             user_group = db.execute(text(
                 "SELECT group_id FROM users WHERE user_id = :user_id AND group_id IS NOT NULL"
@@ -627,7 +642,7 @@ class NotificationService:
             notification_time = datetime.now()
             
             # 4. 각 구성원에게 자동 알림 전송
-            for member in group_members:
+            for member in isolated_recipients(db, request.user_id, group_members):
                 # 경고 알림 설정 확인 (기본값: True)
                 notification_enabled = db.execute(text(
                     """
@@ -695,6 +710,7 @@ class NotificationService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
             # 1. 현재 경고 카운트 조회
             current_count = db.execute(text(
                 "SELECT warning_count FROM users WHERE user_id = :user_id"

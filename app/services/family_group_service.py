@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.core.database import get_db
+from app.services.test_account_boundary import account_row, ensure_actor_group, ensure_group_domain, ensure_pair_domain
 from app.schemas.family_group import (
     FamilyGroupCreateRequest, 
     FamilyGroupCreateResponse,
@@ -64,6 +65,8 @@ class FamilyGroupService:
             """), {"group_id": group_id}).fetchall()
             
             member_ids = [m.user_id for m in members]
+            if member_ids:
+                ensure_group_domain(db, member_ids[0], group_id)
             
             # 2. 모든 조합에 대해 위험 및 경고 알림 설정 생성 (자기 자신 제외)
             for user_id in member_ids:
@@ -132,6 +135,7 @@ class FamilyGroupService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
             # 1. 사용자가 이미 그룹에 속해있는지 확인 및 사용자 정보 조회
             user_info = db.execute(text(
                 "SELECT user_id, group_id FROM users WHERE user_id = :user_id"
@@ -203,7 +207,7 @@ class FamilyGroupService:
         finally:
             db.close()
     
-    def verify_join_code(self, join_code: str) -> dict:
+    def verify_join_code(self, join_code: str, actor_id: Optional[str] = None) -> dict:
         """
         그룹 참여 코드 검증
         참여하기 전에 그룹이 유효한지 확인
@@ -211,6 +215,10 @@ class FamilyGroupService:
         db = self._get_db()
         
         try:
+            # Verification itself must not reveal availability of an opposite-domain family.
+            if actor_id is None:
+                return {"is_valid": False}
+            account_row(db, actor_id)
             # 코드로 그룹 찾기
             group_info = db.execute(text("""
                 SELECT 
@@ -227,6 +235,10 @@ class FamilyGroupService:
                 return{"is_valid" : False}
                 #raise ValueError("INVALID_CODE")
             
+            try:
+                ensure_group_domain(db, actor_id, group_info.id)
+            except ValueError:
+                return {"is_valid": False}
             # 그룹이 가득 찼는지 확인
             is_full = group_info.current_members >= self.MAX_MEMBERS
             
@@ -252,6 +264,7 @@ class FamilyGroupService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.user_id)
             # 1. 사용자가 이미 그룹에 속해있는지 확인 및 사용자 정보 조회
             user_info = db.execute(text(
                 "SELECT user_id, group_id FROM users WHERE user_id = :user_id"
@@ -270,6 +283,7 @@ class FamilyGroupService:
             
             if not group_info:
                 raise ValueError("INVALID_JOIN_CODE")
+            ensure_group_domain(db, request.user_id, group_info.id)
             
             # 최대 멤버 수 체크
             if group_info.current_members >= self.MAX_MEMBERS:
@@ -330,6 +344,7 @@ class FamilyGroupService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, user_id)
             # 1. 사용자의 그룹 ID 확인
             user_group = db.execute(text(
                 "SELECT group_id FROM users WHERE user_id = :user_id"
@@ -427,6 +442,8 @@ class FamilyGroupService:
         db = db if db is not None else self._get_db()
         
         try:
+            # A mixed legacy/corrupt group must not let a test actor remove real members.
+            ensure_actor_group(db, user_id)
             # 1. 사용자의 그룹 정보 확인
             user_group = db.execute(text(
                 "SELECT group_id FROM users WHERE user_id = :user_id"
@@ -521,6 +538,8 @@ class FamilyGroupService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, request.creator_id)
+            ensure_pair_domain(db, request.creator_id, request.target_user_id)
             # 1. 그룹장의 그룹 확인
             creator_group = db.execute(text(
                 """
@@ -652,6 +671,7 @@ class FamilyGroupService:
         db = self._get_db()
         
         try:
+            ensure_actor_group(db, user_id)
             # 1. 사용자의 그룹 정보 조회
             user_group_info = db.execute(text(
                 """

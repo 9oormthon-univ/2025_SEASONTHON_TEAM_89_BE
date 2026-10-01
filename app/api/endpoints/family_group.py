@@ -46,6 +46,8 @@ async def create_family_group(
         return result
     except ValueError as e:
         error_code = str(e)
+        if error_code == "GROUP_DOMAIN_MISMATCH":
+            raise HTTPException(403, "테스트 가족과 일반 가족을 함께 사용할 수 없습니다.")
         if error_code == "USER_ALREADY_IN_GROUP":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -84,7 +86,7 @@ async def verify_group_code(
     
     """
     # try:
-    result = family_group_service.verify_join_code(request.join_code)
+    result = family_group_service.verify_join_code(request.join_code, actor_id=_current_user.user_id)
     return result
     """ 검증 필요 없어서... 단순하게로만 함
     Raises:
@@ -137,6 +139,8 @@ async def join_family_group(
         return result
     except ValueError as e:
         error_code = str(e)
+        if error_code == "GROUP_DOMAIN_MISMATCH":
+            raise HTTPException(403, "테스트 가족과 일반 가족을 함께 사용할 수 없습니다.")
         if error_code == "USER_ALREADY_IN_GROUP":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -188,6 +192,8 @@ async def kick_member_from_group(
         return result
     except ValueError as e:
         error_code = str(e)
+        if error_code == "GROUP_DOMAIN_MISMATCH":
+            raise HTTPException(403, "테스트 가족과 일반 가족을 함께 사용할 수 없습니다.")
         if error_code == "NOT_GROUP_CREATOR":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

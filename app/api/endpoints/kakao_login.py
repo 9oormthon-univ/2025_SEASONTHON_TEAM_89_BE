@@ -15,7 +15,8 @@ from app.schemas.kakao import (
 from app.services.kakao_service import kakao_service
 from app.services.jwt_service import jwt_service
 from app.services.family_group_service import family_group_service
-from app.services.ml_data_storage import delete_user_labeled_csv_files
+from app.services.ml_data_storage import delete_user_labeled_csv_files, delete_test_account_csv_files
+from app.services.test_account_boundary import is_test_account
 from app.repositories.user_repository import get_user_repository
 from app import settings
 import logging
@@ -138,7 +139,10 @@ async def delete_user(
         logger.info(f"회원 탈퇴 시작: user_id={request.user_id}, kakao_id={user.kakao_id}")
         
         # 2. 사용자가 업로드한 ML 라벨링 원본 삭제. 실패하면 계정 DB 변경 전에 중단한다.
-        deleted_csv_count = delete_user_labeled_csv_files(request.user_id)
+        if is_test_account(user.kakao_id):
+            deleted_csv_count = delete_test_account_csv_files(request.user_id)
+        else:
+            deleted_csv_count = delete_user_labeled_csv_files(request.user_id)
         logger.info(
             f"회원 탈퇴 ML CSV 삭제 완료: user_id={request.user_id}, count={deleted_csv_count}"
         )
@@ -170,6 +174,8 @@ async def delete_user(
         db.commit()
 
         # 5. 외부 카카오 연동 해제는 로컬 계정 삭제를 막지 않는 후속 정리로 처리한다.
+        if is_test_account(kakao_id):
+            return
         try:
             logger.info(f"카카오 앱 연동 해제 시도: kakao_id={kakao_id}")
             kakao_unlink_success = await kakao_service.admin_unlink_user(int(kakao_id))

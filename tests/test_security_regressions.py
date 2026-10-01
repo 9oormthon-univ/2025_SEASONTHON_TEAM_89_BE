@@ -254,6 +254,7 @@ def test_all_user_routes_require_bearer_and_actor_routes_check_claim():
 def test_no_unexpected_public_user_routes_are_registered():
     public_routes = {
         "app/api/endpoints/kakao_login.py": {"kakao_login_with_token"},
+        "app/api/endpoints/auth.py": {"test_account_login"},
     }
     endpoint_files = (
         "app/api/endpoints/auth.py",

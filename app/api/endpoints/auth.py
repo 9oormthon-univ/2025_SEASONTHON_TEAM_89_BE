@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
@@ -7,9 +7,38 @@ from app.core.database import get_db
 from app.api.dependencies import enforce_actor, require_current_user
 from app.schemas.kakao import DeviceTokenRegisterRequest, DeviceTokenUpdateResponse
 from app.repositories.user_repository import get_user_repository
+from app.services.test_account_service import (
+    attempt_limiter, configured_code_hashes, read_credentials, match_slot, login_test_account,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.post("/test-account", summary="서버 검증 테스트 계정 로그인", openapi_extra={
+    "requestBody": {"required": True, "content": {"application/json": {"schema": {
+        "type": "object", "required": ["code"], "additionalProperties": False,
+        "properties": {"code": {"type": "string", "minLength": 22, "maxLength": 128, "writeOnly": True},
+                       "device_token": {"type": "string", "maxLength": 255, "writeOnly": True}},
+    }}}},
+})
+async def test_account_login(request: Request, db: Session = Depends(get_db)):
+    config = configured_code_hashes()
+    if config is None:
+        raise HTTPException(503, "테스트 계정 로그인이 비활성화되어 있습니다.")
+    attempt_limiter.check(request.client.host if request.client else "unknown")
+    code, device_token = await read_credentials(request)
+    slot = match_slot(code, config)
+    try:
+        return login_test_account(db, slot, device_token)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        # Database exceptions may include parameters; never log the request or credential.
+        logger.error("테스트 계정 로그인 처리 실패")
+        raise HTTPException(503, "테스트 계정을 사용할 수 없습니다.") from None
 
 
 @router.post(

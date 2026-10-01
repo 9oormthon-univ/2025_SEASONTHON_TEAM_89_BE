@@ -10,6 +10,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 ML_INBOX_DIR = Path(
     os.environ.get("ML_INBOX_DIR", str(_REPO_ROOT / "data" / "ml_inbox"))
 )
+TEST_UPLOAD_PREFIX = "test-account-"
 _UNSAFE_USER_ID_CHARACTER = re.compile(r"[^A-Za-z0-9_-]")
 _UPLOAD_TIMESTAMP_PATTERN = r"\d{8}T\d{6}_\d{3}"
 
@@ -86,3 +87,20 @@ def delete_user_labeled_csv_files(
         deleted += 1
 
     return deleted
+
+
+def test_account_inbox() -> Path:
+    """Never allow synthetic uploads to enter (or contain) the production training inbox."""
+    target = _resolved_inbox(os.environ.get("TEST_ACCOUNT_CSV_DIR", str(_REPO_ROOT / "data" / "test_account_uploads")))
+    production = _resolved_inbox(ML_INBOX_DIR)
+    if target == production or target.is_relative_to(production) or production.is_relative_to(target):
+        raise ValueError("test upload directory must be separate from ML_INBOX_DIR")
+    return target
+
+
+def save_test_account_csv(user_id: str, body: bytes) -> Tuple[str, Path]:
+    return save_user_labeled_csv(TEST_UPLOAD_PREFIX + user_id, body, test_account_inbox())
+
+
+def delete_test_account_csv_files(user_id: str) -> int:
+    return delete_user_labeled_csv_files(TEST_UPLOAD_PREFIX + user_id, test_account_inbox())

@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends, status, Request
 import logging
 
 from app.api.dependencies import enforce_actor, require_current_user
-from app.services.ml_data_storage import save_user_labeled_csv
+from app.services.ml_data_storage import save_user_labeled_csv, save_test_account_csv
+from app.services.test_account_boundary import is_test_account
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -71,7 +72,10 @@ async def upload_labeled_csv(
 
     # 6) 저장 — ML_INBOX_DIR 하위의 충돌 안전 파일로 원시 바이트를 기록
     try:
-        filename, _ = save_user_labeled_csv(user_id, body)
+        if is_test_account(current_user.kakao_id):
+            filename, _ = save_test_account_csv(user_id, body)
+        else:
+            filename, _ = save_user_labeled_csv(user_id, body)
     except Exception as e:
         logger.error(f"라벨링 CSV 저장 실패: user_id={user_id}, error={str(e)}")
         raise HTTPException(

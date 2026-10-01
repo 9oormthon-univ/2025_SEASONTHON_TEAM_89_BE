@@ -9,6 +9,8 @@ from app.models.user import User
 from app.repositories.user_repository import get_user_repository
 from app.security import actor_ids_match
 from app.services.jwt_service import jwt_service
+from app.services.test_account_boundary import is_test_account, TEST_ACCOUNT_PREFIX
+from app.services.test_account_service import configured_code_hashes
 
 
 bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
@@ -38,6 +40,11 @@ def require_current_user(
     user = get_user_repository(db).get_by_user_id(user_id)
     if user is None or not user.is_active:
         raise _unauthorized()
+    if is_test_account(user.kakao_id):
+        config = configured_code_hashes()
+        # Removing/disabling a slot also revokes its previously issued JWTs at normal API entry.
+        if config is None or user.kakao_id[len(TEST_ACCOUNT_PREFIX):] not in config:
+            raise _unauthorized()
     return user
 
 
