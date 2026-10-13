@@ -14,3 +14,7 @@ python-jose[cryptography]==3.5.0
 # APNs and Firebase Cloud Messaging
 aioapns==4.0
 firebase-admin==7.5.0
+
+# Server-only Google Play verification and encrypted receipt storage
+google-auth[requests]==2.62.0
+cryptography==50.0.2
