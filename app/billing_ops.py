@@ -5,6 +5,7 @@ import logging
 import os
 import re
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -20,6 +21,8 @@ _SETTINGS = (
 def configuration_issues(settings):
     """Inspect names, format and file metadata only; never return values or paths."""
     missing, invalid = [], []
+    if not settings.test_users_valid:
+        invalid.append({"name": "GOOGLE_PLAY_BILLING_TEST_USER_IDS", "reason": "invalid_uuid_list"})
     for name, attribute in _SETTINGS:
         value = getattr(settings, attribute, "")
         if not value:
@@ -116,15 +119,68 @@ def _check_runtime(settings, enabled):
         return _failure(stage, reasons[stage], checkout_enabled=enabled)
 
 
+def status_snapshot(settings, now=None):
+    """Read operational counts only; do not inspect keys or contact Google."""
+    with _quiet_logging():
+        return _status_runtime(settings, now or datetime.now(timezone.utc))
+
+
+def _status_runtime(settings, now):
+    fields = {"checkout_enabled": bool(settings.enabled),
+              "test_account_count": len(settings.test_user_ids)}
+    stage = "database"
+    try:
+        from sqlalchemy import and_, inspect, or_
+        from app.core.database import SessionLocal
+        from app.models.play_billing import BILLING_TABLES, BillingPurchase, BillingSyncState
+        from app.models.user import User
+        from app.services.play_billing_client import PRODUCTS
+
+        with SessionLocal() as db:
+            db.connection()
+            stage = "schema"
+            inspector = inspect(db.get_bind())
+            missing = [table.name for table in BILLING_TABLES if not inspector.has_table(table.name)]
+            if missing:
+                return _failure(stage, "billing_tables_missing", missing_tables=missing,
+                                schema_ready=False, **fields)
+            stage = "status"
+            state = db.get(BillingSyncState, "voided")
+            stamp = state.checked_until if state else None
+            if stamp is not None:
+                stamp = (stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None
+                         else stamp.astimezone(timezone.utc)).isoformat().replace("+00:00", "Z")
+            subs = [product for product, spec in PRODUCTS.items() if spec.product_type == "subs"]
+            products = [product for product, spec in PRODUCTS.items() if spec.product_type == "inapp"]
+            # checked_at=None is the marker left after an acknowledgement failure.
+            # Expired subscriptions, deleted owners and replacement tombstones are not pending work.
+            pending = db.query(BillingPurchase).join(User, User.user_id == BillingPurchase.user_id).filter(
+                User.is_active.is_(True), BillingPurchase.acknowledged.is_(False),
+                BillingPurchase.revoked_at.is_(None), BillingPurchase.superseded_by_hash.is_(None),
+                BillingPurchase.token_encrypted != "",
+                or_(and_(BillingPurchase.product_type == "subs", BillingPurchase.product_id.in_(subs),
+                         BillingPurchase.expires_at > now),
+                    and_(BillingPurchase.product_type == "inapp", BillingPurchase.product_id.in_(products),
+                         BillingPurchase.expires_at.is_(None))),
+            ).count()
+        return {"ok": True, "schema_ready": True, "voided_last_success": stamp,
+                "unacknowledged_purchases": pending, **fields}
+    except Exception:
+        reasons = {"database": "database_unavailable", "schema": "billing_schema_check_failed",
+                   "status": "billing_status_check_failed"}
+        return _failure(stage, reasons[stage], **fields)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("migrate", "check", "sync-voided"))
+    parser.add_argument("command", choices=("migrate", "check", "status", "sync-voided"))
     args = parser.parse_args()
     stage = "initialization"
     try:
-        if args.command == "check":
+        if args.command in ("check", "status"):
             from app.services.play_billing_client import BillingSettings
-            result = check_setup(BillingSettings.from_env())
+            settings = BillingSettings.from_env()
+            result = check_setup(settings) if args.command == "check" else status_snapshot(settings)
             print(json.dumps(result))
             if not result["ok"]:
                 raise SystemExit(1)

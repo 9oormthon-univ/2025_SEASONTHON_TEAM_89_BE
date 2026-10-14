@@ -51,9 +51,28 @@ class BillingSettings:
     rtdn_audience: str = ""
     rtdn_email: str = ""
     rtdn_subscription: str = ""
+    test_user_ids: tuple[str, ...] = field(default=(), repr=False)
+    test_users_valid: bool = field(default=True, repr=False)
+
+    def checkout_enabled_for(self, user_id: str | None) -> bool:
+        return self.test_users_valid and (self.enabled or bool(user_id and user_id in self.test_user_ids))
+
+    @property
+    def maintenance_enabled(self) -> bool:
+        return self.test_users_valid and (self.enabled or bool(self.test_user_ids))
 
     @classmethod
     def from_env(cls) -> "BillingSettings":
+        from uuid import UUID
+        raw_test_users = os.getenv("GOOGLE_PLAY_BILLING_TEST_USER_IDS", "").strip()
+        test_users = tuple(item.strip() for item in raw_test_users.split(",")) if raw_test_users else ()
+        test_users_valid = True
+        try:
+            if any(str(UUID(item)) != item for item in test_users):
+                raise ValueError()
+        except (ValueError, AttributeError):
+            test_users = ()  # Malformed allowlists never open checkout.
+            test_users_valid = False
         return cls(
             enabled=os.getenv("GOOGLE_PLAY_BILLING_ENABLED", "false").strip().lower()
             in {"true", "1", "yes", "on"},
@@ -65,11 +84,15 @@ class BillingSettings:
                 os.getenv("GOOGLE_PLAY_RTDN_EMAIL", ""),
             ).strip(),
             rtdn_subscription=os.getenv("GOOGLE_PLAY_RTDN_SUBSCRIPTION", "").strip(),
+            test_user_ids=tuple(dict.fromkeys(test_users)),
+            test_users_valid=test_users_valid,
         )
 
     @property
     def configuration_complete(self) -> bool:
         """Check local configuration without opening keys or contacting Google."""
+        if not self.test_users_valid:
+            return False
         try:
             paths_ready = all(
                 value

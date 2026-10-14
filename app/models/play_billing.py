@@ -1,4 +1,4 @@
-"""Receipt ownership persists even after account deletion; tokens are encrypted."""
+"""Encrypted receipts; deletion preserves only unclaimable token-hash markers."""
 from sqlalchemy import Boolean, Column, DateTime, String, Text
 
 from app.core.database import Base

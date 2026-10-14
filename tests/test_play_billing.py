@@ -778,12 +778,13 @@ def test_rtdn_queries_google_before_dedup_mark_and_retries_failure(api, monkeypa
         assert db.get(api.m.models.BillingNotification, "fixture-message-1") is None
     api.play.receipts[TOKEN] = subscription()
     assert api.client.post("/api/billing/google-play/rtdn", json=body, headers={"Authorization": PUSH_BEARER}).status_code == 204
-    assert len(api.play.calls) == 2 and len(api.play.ack_calls) == 1
+    # Failed initial lookup, successful account discovery, then current state under its lock.
+    assert len(api.play.calls) == 3 and len(api.play.ack_calls) == 1
     with api.factory() as db:
         assert db.get(api.m.models.BillingNotification, "fixture-message-1") is not None
         assert service(api, db).entitlement(USER_A)["ad_free"]
     assert api.client.post("/api/billing/google-play/rtdn", json=body, headers={"Authorization": PUSH_BEARER}).status_code == 204
-    assert len(api.play.calls) == 2 and len(auth_calls) == 3
+    assert len(api.play.calls) == 3 and len(auth_calls) == 3
 
 
 def test_rtdn_test_notification_works_while_checkout_disabled(api, monkeypatch):
@@ -1013,3 +1014,160 @@ def test_operator_logging_restores_stricter_existing_threshold(api, monkeypatch)
         assert not result["ok"] and logging.root.manager.disable == logging.CRITICAL + 20
     finally:
         logging.disable(original)
+
+
+def delete_fixture_account(api):
+    helper = importlib.import_module("app.services.billing_account_deletion")
+    with api.factory() as db:
+        user = db.query(api.m.User).filter_by(user_id=USER_A).with_for_update().first()
+        helper.delete_billing_account_data(db, USER_A)
+        db.delete(user)
+        db.commit()
+
+
+def test_deletion_during_google_fetch_cannot_recreate_purchase(api, monkeypatch):
+    api.play.receipts[TOKEN] = subscription()
+    original = api.play.get_subscription
+
+    def fetch(token):
+        payload = original(token)
+        delete_fixture_account(api)
+        return payload
+
+    monkeypatch.setattr(api.play, "get_subscription", fetch)
+    response = verify_http(api)
+    assert response.status_code == 409
+    assert not api.play.ack_calls
+    with api.factory() as db:
+        assert db.get(api.m.models.BillingAccount, USER_A) is None
+        assert db.get(api.m.models.BillingPurchase, digest(TOKEN)) is None
+
+
+@pytest.mark.parametrize("ack_failure", [False, True])
+def test_deletion_during_google_ack_cannot_restore_erased_data(api, monkeypatch, ack_failure):
+    api.play.receipts[TOKEN] = subscription()
+    original = api.play.acknowledge
+
+    def acknowledge(*args):
+        delete_fixture_account(api)
+        if ack_failure:
+            raise api.m.adapter.PlayError("unavailable")
+        original(*args)
+
+    monkeypatch.setattr(api.play, "acknowledge", acknowledge)
+    assert verify_http(api).status_code == 409
+    with api.factory() as db:
+        record = db.get(api.m.models.BillingPurchase, digest(TOKEN))
+        assert record.user_id == "__deleted_billing_owner__"
+        assert record.token_encrypted == "" and record.product_id is None
+        assert not record.active and not record.acknowledged
+        assert record.checked_at is None and record.revoked_at is None
+        assert db.get(api.m.models.BillingAccount, USER_A) is None
+
+
+def test_voided_sync_skips_erased_tokens_and_advances_cursor(api):
+    api.play.receipts[TOKEN] = lifetime(acknowledged=True)
+    assert verify_http(api, product=LIFETIME, kind="inapp").status_code == 200
+    delete_fixture_account(api)
+    api.play.pages[None] = {"voidedPurchases": [{"purchaseToken": TOKEN}]}
+    before = len(api.play.calls)
+    with api.factory() as db:
+        assert service(api, db).sync_voided() == 1
+        record = db.get(api.m.models.BillingPurchase, digest(TOKEN))
+        assert record.checked_at is None and record.revoked_at is None
+        assert db.get(api.m.models.BillingSyncState, "voided") is not None
+    assert len(api.play.calls) == before + 1  # Only authoritative list, no decrypt/receipt lookup.
+
+
+def test_ack_retry_isolates_failure_and_recovers_next_receipt(api):
+    other = TOKEN + "-other"
+    api.play.receipts[TOKEN] = subscription()
+    api.play.receipts[other] = subscription(USER_B)
+    api.play.ack_error = True
+    assert verify_http(api).status_code == 503
+    assert verify_http(api, user=USER_B, token=other).status_code == 503
+    api.play.ack_error = False
+    api.play.receipts[TOKEN] = api.m.adapter.PlayError("unavailable")
+    with api.factory() as db:
+        assert service(api, db).retry_unacknowledged() == {"checked": 1, "failed": 1}
+        assert db.get(api.m.models.BillingPurchase, digest(other)).acknowledged
+        assert not db.get(api.m.models.BillingPurchase, digest(TOKEN)).active
+
+
+def test_ack_retry_bounded_failure_does_not_starve_next_receipt(api):
+    other = TOKEN + "-other"
+    api.play.receipts[TOKEN] = subscription()
+    api.play.receipts[other] = subscription(USER_B)
+    api.play.ack_error = True
+    assert verify_http(api).status_code == 503
+    assert verify_http(api, user=USER_B, token=other).status_code == 503
+    first, second = sorted([TOKEN, other], key=digest)
+    api.play.ack_error = False
+    api.play.receipts[first] = api.m.adapter.PlayError("unavailable")
+    with api.factory() as db:
+        billing = service(api, db)
+        assert billing.retry_unacknowledged(limit=1) == {"checked": 0, "failed": 1}
+        assert billing.retry_unacknowledged(limit=1) == {"checked": 1, "failed": 0}
+        assert db.get(api.m.models.BillingPurchase, digest(second)).acknowledged
+
+
+def test_pilot_allows_only_authenticated_selected_account_with_global_sales_off(api):
+    api.settings = replace(api.settings, enabled=False, test_user_ids=(USER_A,))
+    assert api.client.get("/api/billing/config", headers=api.headers[USER_A]).json()["google_play_ready"]
+    assert not api.client.get("/api/billing/config", headers=api.headers[USER_B]).json()["google_play_ready"]
+    api.play.receipts[TOKEN] = subscription()
+    assert verify_http(api, user=USER_B).status_code == 503
+    assert not api.play.calls and not api.play.ack_calls
+    assert verify_http(api).json()["entitlement"]["ad_free"]
+
+
+@pytest.mark.parametrize("raw", ["not-a-uuid", USER_A + ",broken", USER_A + ",", ""])
+def test_malformed_pilot_allowlist_never_opens_sales(isolated_modules, monkeypatch, raw):
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_ENABLED", "false")
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_TEST_USER_IDS", raw)
+    settings = isolated_modules.adapter.BillingSettings.from_env()
+    assert not settings.checkout_enabled_for(USER_A)
+    assert not settings.maintenance_enabled
+
+
+def test_pilot_allowlist_parses_trimmed_canonical_ids(isolated_modules, monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_ENABLED", "false")
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_TEST_USER_IDS", " " + USER_A + ", " + USER_B + " ")
+    settings = isolated_modules.adapter.BillingSettings.from_env()
+    assert settings.test_user_ids == (USER_A, USER_B)
+    assert settings.checkout_enabled_for(USER_A) and settings.maintenance_enabled
+    assert not settings.checkout_enabled_for(None)
+
+
+def test_invalid_pilot_configuration_has_safe_operator_diagnostic(isolated_modules, monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_ENABLED", "true")
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_TEST_USER_IDS", "not-a-uuid")
+    settings = isolated_modules.adapter.BillingSettings.from_env()
+    assert not settings.configuration_complete and not settings.checkout_enabled_for(USER_A)
+    ops = importlib.import_module("app.billing_ops")
+    result = ops.check_setup(settings)
+    assert {"name": "GOOGLE_PLAY_BILLING_TEST_USER_IDS", "reason": "invalid_uuid_list"} in result["invalid_fields"]
+    assert "not-a-uuid" not in json.dumps(result)
+
+
+def test_new_notification_rechecks_current_state_after_account_discovery(api, monkeypatch):
+    with api.factory() as db:
+        service(api, db).register_account(USER_A)
+    api.play.receipts[TOKEN] = subscription()
+    original = api.play.get_subscription
+    calls = []
+
+    def fetch(token):
+        payload = original(token)
+        calls.append(token)
+        # State changed while account discovery was in flight. The first
+        # response cannot be used to deliver access or acknowledge the receipt.
+        api.play.receipts[token] = subscription(state="EXPIRED", expiry=NOW - timedelta(seconds=1))
+        return payload
+
+    monkeypatch.setattr(api.play, "get_subscription", fetch)
+    with api.factory() as db:
+        billing = service(api, db)
+        billing.reconcile_notification(TOKEN, "subs")
+        assert not billing.entitlement(USER_A)["ad_free"]
+    assert len(calls) == 2 and not api.play.ack_calls
