@@ -249,6 +249,27 @@ def test_subscription_states_preserve_only_paid_access(isolated_modules, state, 
     assert result.expires_at.tzinfo == UTC
     if not completed:
         assert result.linked_token is None
+    assert result.subscription_state == state
+    assert result.auto_renewing is (state != "CANCELED")
+    assert result.next_billing_at == (result.expires_at if state == "ACTIVE" else None)
+
+
+@pytest.mark.parametrize("value,expected", [(True, True), (False, False),
+                                           (None, None), (1, None), ("true", None)])
+def test_renewal_display_requires_an_explicit_google_boolean(isolated_modules, value, expected):
+    payload = subscription(acknowledged=True)
+    payload["lineItems"][0]["autoRenewingPlan"]["autoRenewEnabled"] = value
+    result = isolated_modules.adapter.snapshot(payload, MONTHLY, "subs", NOW)
+    assert result.active  # Optional display data never creates the paid entitlement.
+    assert result.auto_renewing is expected
+    assert result.next_billing_at == (result.expires_at if expected is True else None)
+
+
+def test_missing_renewal_flag_never_invents_a_charge_date(isolated_modules):
+    payload = subscription(acknowledged=True)
+    payload["lineItems"][0]["autoRenewingPlan"].pop("autoRenewEnabled")
+    result = isolated_modules.adapter.snapshot(payload, MONTHLY, "subs", NOW)
+    assert result.auto_renewing is None and result.next_billing_at is None
 
 
 @pytest.mark.parametrize("offset", [0, -1])
@@ -565,7 +586,11 @@ def test_lease_rechecks_at_five_minutes_and_does_not_extend_on_outage(api):
     api.clock.now = NOW + timedelta(minutes=4, seconds=59)
     fresh = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A])
     assert fresh.status_code == 200 and fresh.json()["cache_until"] == initial["cache_until"]
-    assert len(api.play.calls) == 1
+    assert fresh.json()["ad_free"]
+    assert fresh.json()["next_billing_at"] is None
+    assert fresh.json()["auto_renewing"] is None
+    assert fresh.json()["subscription_state"] is None
+    assert len(api.play.calls) == 2  # Optional plan display re-read failed; original lease still bounds access.
     api.clock.now = NOW + timedelta(minutes=5)
     assert api.client.get("/api/billing/entitlement", headers=api.headers[USER_A]).status_code == 503
     with api.factory() as db:
@@ -586,6 +611,120 @@ def test_subscription_lease_is_clipped_to_expiry_and_renewal_uses_google_time(ap
     assert renewed.status_code == 200 and renewed.json()["ad_free"]
     assert renewed.json()["expires_at"] == stamp(next_expiry)
     assert len(api.play.calls) == 2
+
+
+def test_verified_subscription_exposes_google_renewal_without_a_second_fetch(api):
+    expiry = NOW + timedelta(days=30)
+    api.play.receipts[TOKEN] = subscription(acknowledged=True, expiry=expiry)
+    response = verify_http(api)
+    assert response.status_code == 200, response.text
+    plan = response.json()["entitlement"]
+    assert plan["ad_free"] and plan["subscription_state"] == "ACTIVE"
+    assert plan["auto_renewing"] is True and plan["next_billing_at"] == stamp(expiry)
+    assert len(api.play.calls) == 1
+
+
+def test_acknowledgement_wait_cannot_attach_old_active_metadata_to_a_cancel_rtdn(api, monkeypatch):
+    expiry = NOW + timedelta(days=30)
+    api.play.receipts[TOKEN] = subscription(expiry=expiry)
+    original = api.play.acknowledge
+
+    def acknowledge(*args):
+        # Exact same clock/expiry models MySQL DATETIME's one-second precision.
+        # This different request stores a newer CANCELED state during ACK I/O.
+        api.play.receipts[TOKEN] = subscription(state="CANCELED", acknowledged=True, expiry=expiry)
+        with api.factory() as db:
+            service(api, db).reconcile_notification(TOKEN, "subs")
+            canceled = db.get(api.m.models.BillingPurchase, digest(TOKEN))
+            assert api.m.service.utc(canceled.checked_at) == NOW
+            assert api.m.service.utc(canceled.expires_at) == expiry
+        original(*args)
+
+    monkeypatch.setattr(api.play, "acknowledge", acknowledge)
+    response = verify_http(api)
+    assert response.status_code == 200, response.text
+    plan = response.json()["entitlement"]
+    assert plan["ad_free"] and plan["expires_at"] == stamp(expiry)
+    assert plan["subscription_state"] == "CANCELED"
+    assert plan["auto_renewing"] is False and plan["next_billing_at"] is None
+    assert len(api.play.ack_calls) == 1
+
+
+@pytest.mark.parametrize("state,auto_renewing", [("CANCELED", False), ("IN_GRACE_PERIOD", True)])
+def test_paid_canceled_and_grace_period_plans_do_not_claim_a_next_charge(api, state, auto_renewing):
+    api.play.receipts[TOKEN] = subscription(acknowledged=True, state=state)
+    plan = verify_http(api).json()["entitlement"]
+    assert plan["ad_free"] and plan["subscription_state"] == state
+    assert plan["auto_renewing"] is auto_renewing and plan["next_billing_at"] is None
+    assert plan["expires_at"] == stamp(NOW + timedelta(days=30))
+
+
+def test_get_plan_refreshes_google_cancel_even_inside_a_valid_lease(api):
+    api.play.receipts[TOKEN] = subscription(acknowledged=True)
+    initial = verify_http(api).json()["entitlement"]
+    api.clock.now = NOW + timedelta(seconds=1)
+    api.play.receipts[TOKEN] = subscription(acknowledged=True, state="CANCELED")
+    response = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A])
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan["ad_free"] and plan["subscription_state"] == "CANCELED"
+    assert plan["auto_renewing"] is False and plan["next_billing_at"] is None
+    assert plan["expires_at"] == initial["expires_at"]
+    assert len(api.play.calls) == 2
+
+
+@pytest.mark.parametrize("error", ["invalid_purchase", "not_found"])
+def test_invalid_google_plan_refresh_does_not_reuse_a_paid_display_lease(api, error):
+    api.play.receipts[TOKEN] = subscription(acknowledged=True)
+    assert verify_http(api).json()["entitlement"]["ad_free"]
+    api.play.receipts[TOKEN] = api.m.adapter.PlayError(error)
+    response = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A])
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert not plan["ad_free"] and plan["product_id"] is None
+    assert plan["subscription_state"] is None and plan["next_billing_at"] is None
+    with api.factory() as db:
+        assert not db.get(api.m.models.BillingPurchase, digest(TOKEN)).active
+
+
+def test_current_plan_refresh_reselects_another_still_paid_subscription(api):
+    monthly_token = TOKEN + "-monthly"
+    api.play.receipts[monthly_token] = subscription(acknowledged=True)
+    assert verify_http(api, token=monthly_token).json()["entitlement"]["product_id"] == MONTHLY
+    api.play.receipts[TOKEN] = subscription(acknowledged=True, product=YEARLY, expiry=NOW + timedelta(days=365))
+    assert verify_http(api, product=YEARLY).json()["entitlement"]["product_id"] == YEARLY
+    api.play.receipts[TOKEN] = subscription(acknowledged=True, product=YEARLY, state="ON_HOLD",
+                                           expiry=NOW + timedelta(days=365))
+    plan = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A]).json()
+    assert plan["ad_free"] and plan["product_id"] == MONTHLY
+    assert plan["subscription_state"] == "ACTIVE"
+    assert plan["next_billing_at"] == stamp(NOW + timedelta(days=30))
+
+
+def test_lifetime_plan_has_no_renewal_fields_or_optional_google_query(api):
+    api.play.receipts[TOKEN] = lifetime(acknowledged=True)
+    plan = verify_http(api, product=LIFETIME, kind="inapp").json()["entitlement"]
+    assert plan["ad_free"] and plan["product_id"] == LIFETIME
+    for field in ("expires_at", "next_billing_at", "auto_renewing", "subscription_state"):
+        assert plan[field] is None
+    calls = len(api.play.calls)
+    current = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A]).json()
+    assert current["ad_free"] and current["next_billing_at"] is None
+    assert len(api.play.calls) == calls
+
+
+def test_optional_plan_fetch_cannot_grant_a_lease_that_expired_while_waiting(api, monkeypatch):
+    api.play.receipts[TOKEN] = subscription(acknowledged=True, expiry=NOW + timedelta(seconds=5))
+    assert verify_http(api).json()["entitlement"]["ad_free"]
+
+    def outage_after_expiry(token):
+        api.clock.now = NOW + timedelta(seconds=6)
+        raise api.m.adapter.PlayError("unavailable")
+
+    monkeypatch.setattr(api.play, "get_subscription", outage_after_expiry)
+    response = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A])
+    assert response.status_code == 200, response.text
+    assert not response.json()["ad_free"] and response.json()["next_billing_at"] is None
 
 
 def test_expiry_boundary_rechecks_google_and_denies_genuinely_expired_purchase(api):
@@ -783,8 +922,9 @@ def test_rtdn_queries_google_before_dedup_mark_and_retries_failure(api, monkeypa
     with api.factory() as db:
         assert db.get(api.m.models.BillingNotification, "fixture-message-1") is not None
         assert service(api, db).entitlement(USER_A)["ad_free"]
+    calls = len(api.play.calls)  # The separate entitlement request also reads current plan display data.
     assert api.client.post("/api/billing/google-play/rtdn", json=body, headers={"Authorization": PUSH_BEARER}).status_code == 204
-    assert len(api.play.calls) == 3 and len(auth_calls) == 3
+    assert len(api.play.calls) == calls and len(auth_calls) == 3
 
 
 def test_rtdn_test_notification_works_while_checkout_disabled(api, monkeypatch):
@@ -1041,6 +1181,26 @@ def test_deletion_during_google_fetch_cannot_recreate_purchase(api, monkeypatch)
     with api.factory() as db:
         assert db.get(api.m.models.BillingAccount, USER_A) is None
         assert db.get(api.m.models.BillingPurchase, digest(TOKEN)) is None
+
+
+def test_deletion_during_optional_plan_fetch_cannot_reactivate_an_erased_receipt(api, monkeypatch):
+    api.play.receipts[TOKEN] = subscription(acknowledged=True)
+    assert verify_http(api).json()["entitlement"]["ad_free"]
+    original = api.play.get_subscription
+
+    def fetch(token):
+        payload = original(token)
+        delete_fixture_account(api)
+        return payload
+
+    monkeypatch.setattr(api.play, "get_subscription", fetch)
+    response = api.client.get("/api/billing/entitlement", headers=api.headers[USER_A])
+    assert response.status_code == 409
+    with api.factory() as db:
+        record = db.get(api.m.models.BillingPurchase, digest(TOKEN))
+        assert record.user_id == "__deleted_billing_owner__" and not record.active
+        assert record.product_id is None and record.token_encrypted == ""
+        assert record.checked_at is None and db.get(api.m.models.BillingAccount, USER_A) is None
 
 
 @pytest.mark.parametrize("ack_failure", [False, True])
