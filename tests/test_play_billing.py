@@ -845,3 +845,171 @@ def test_voided_sync_paginates_and_advances_cursor_only_after_complete_success(a
     voided_calls = [call for call in api.play.calls if call[0] == "voided"]
     assert [call[-1] for call in voided_calls] == [None, "next-fixture-page", None, "next-fixture-page"]
     assert voided_calls[0][1] == int((NOW - timedelta(days=30)).timestamp() * 1000)
+
+
+def operator_module():
+    return importlib.import_module("app.billing_ops")
+
+
+def operator_main(api, monkeypatch, settings, capsys):
+    ops = operator_module()
+    monkeypatch.setattr(sys, "argv", ["billing_ops", "check"])
+    monkeypatch.setattr(api.m.adapter.BillingSettings, "from_env", classmethod(lambda cls: settings))
+    code = 0
+    try:
+        ops.main()
+    except SystemExit as error:
+        code = error.code
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    return code, json.loads(captured.out)
+
+
+def test_operator_missing_environment_stops_before_database_google_and_key_read(api, monkeypatch, capsys):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Preflight must not open database, Google or secret files")
+
+    database = importlib.import_module("app.core.database")
+    monkeypatch.setattr(database, "SessionLocal", forbidden)
+    monkeypatch.setattr(api.m.adapter, "PlayClient", forbidden)
+    monkeypatch.setattr(api.m.service.TokenCipher, "from_file", forbidden)
+    code, result = operator_main(api, monkeypatch, api.m.adapter.BillingSettings(), capsys)
+    assert code == 1 and result["stage"] == "configuration"
+    assert result["reason"] == "missing_environment" and result["checkout_enabled"] is False
+    assert result["missing_env"] == [name for name, _ in operator_module()._SETTINGS]
+    assert result["invalid_fields"] == []
+
+
+@pytest.mark.parametrize("damage,expected", [
+    ("relative", "absolute_path_required"), ("missing", "file_missing"),
+    ("directory", "regular_file_required"), ("unreadable", "file_unreadable"),
+    ("metadata_error", "file_metadata_unavailable"),
+    ("email", "service_account_email_required"), ("subscription", "subscription_resource_required"),
+])
+def test_operator_invalid_metadata_reports_only_setting_names(api, monkeypatch, tmp_path, damage, expected):
+    from pathlib import Path
+    ops = operator_module()
+    private = "private-value-never-print-operator-fixture"
+    name = "GOOGLE_PLAY_SERVICE_ACCOUNT_FILE"
+    settings = api.settings
+    if damage == "relative":
+        settings = replace(settings, credentials_file=private + ".json")
+    elif damage == "missing":
+        settings = replace(settings, credentials_file=str(tmp_path / private))
+    elif damage == "directory":
+        settings = replace(settings, credentials_file=str(tmp_path))
+    elif damage == "unreadable":
+        original = ops.os.access
+        monkeypatch.setattr(ops.os, "access", lambda path, mode: False
+                            if str(path) == settings.credentials_file else original(path, mode))
+    elif damage == "metadata_error":
+        original = Path.exists
+        def denied(path):
+            if str(path) == settings.credentials_file:
+                raise OSError(private + " SQL/mysql/private-path")
+            return original(path)
+        monkeypatch.setattr(Path, "exists", denied)
+    elif damage == "email":
+        name = "GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL"
+        settings = replace(settings, rtdn_email=private)
+    else:
+        name = "GOOGLE_PLAY_RTDN_SUBSCRIPTION"
+        settings = replace(settings, rtdn_subscription=private)
+    missing, invalid = ops.configuration_issues(settings)
+    assert not missing and invalid == [{"name": name, "reason": expected}]
+    serialized = json.dumps(invalid)
+    assert private not in serialized and settings.credentials_file not in serialized
+
+
+@pytest.mark.parametrize("canonical_present,missing", [(False, False), (True, True)])
+def test_operator_email_alias_uses_existing_environment_precedence(api, monkeypatch, canonical_present, missing):
+    ops = operator_module()
+    for name, field in ops._SETTINGS:
+        monkeypatch.setenv(name, getattr(api.settings, field))
+    monkeypatch.setenv("GOOGLE_PLAY_BILLING_ENABLED", "false")
+    monkeypatch.setenv("GOOGLE_PLAY_RTDN_EMAIL", api.settings.rtdn_email)
+    if canonical_present:
+        monkeypatch.setenv("GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL", "")
+    else:
+        monkeypatch.delenv("GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL")
+    settings = api.m.adapter.BillingSettings.from_env()
+    names, invalid = ops.configuration_issues(settings)
+    assert ("GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL" in names) is missing
+    assert not invalid and settings.enabled is False
+
+
+def test_operator_disabled_checkout_can_pass_readonly_preflight_without_paid_state(api, monkeypatch, capsys):
+    calls = []
+    def client(settings):
+        assert settings.enabled is False
+        calls.append("client")
+        return SimpleNamespace(catalog_ready=lambda: True, close=lambda: calls.append("closed"))
+    monkeypatch.setattr(api.m.adapter, "PlayClient", client)
+    settings = replace(api.settings, enabled=False)
+    code, result = operator_main(api, monkeypatch, settings, capsys)
+    assert code == 0 and result == {"ok": True, "configuration_validated": True, "checkout_enabled": False}
+    assert calls == ["client", "closed"] and settings.enabled is False
+    with api.factory() as db:
+        assert db.query(api.m.models.BillingPurchase).count() == 0
+        assert db.query(api.m.models.BillingAccount).count() == 0
+        assert db.query(api.m.models.BillingNotification).count() == 0
+    api.settings = settings
+    assert not api.client.get("/api/billing/config", headers=api.headers[USER_A]).json()["google_play_ready"]
+    assert verify_http(api).status_code == 503
+
+
+@pytest.mark.parametrize("damage,stage,reason", [
+    ("database", "database", "database_unavailable"),
+    ("schema_error", "schema", "billing_schema_check_failed"),
+    ("missing_table", "schema", "billing_tables_missing"),
+    ("token_key", "token_key", "token_encryption_key_invalid"),
+    ("catalog_exception", "catalog", "google_catalog_check_failed"),
+    ("catalog_false", "catalog", "google_catalog_unavailable_or_mismatch"),
+])
+def test_operator_failure_stage_hides_exception_paths_sql_and_secrets(api, monkeypatch, capsys,
+                                                                  damage, stage, reason):
+    import logging
+    import sqlalchemy
+    from pathlib import Path
+    private = "PRIVATE_SQL_TOKEN_SECRET_NEVER_PRINT"
+    database = importlib.import_module("app.core.database")
+    def fail(*args, **kwargs):
+        logging.getLogger("sqlalchemy.engine").critical(private)
+        raise RuntimeError("mysql://private-user:" + private + "@private-host/database")
+    monkeypatch.setattr(api.m.adapter, "PlayClient",
+                        lambda settings: SimpleNamespace(catalog_ready=lambda: True, close=lambda: None))
+    if damage == "database":
+        monkeypatch.setattr(database, "SessionLocal", fail)
+    elif damage == "schema_error":
+        monkeypatch.setattr(sqlalchemy, "inspect", fail)
+    elif damage == "missing_table":
+        api.m.models.BillingPurchase.__table__.drop(api.engine)
+    elif damage == "token_key":
+        Path(api.settings.token_key_file).write_text(private)
+    else:
+        monkeypatch.setattr(api.m.adapter, "PlayClient", lambda settings: SimpleNamespace(
+            catalog_ready=fail if damage == "catalog_exception" else (lambda: False), close=lambda: None))
+    before = logging.root.manager.disable
+    code, result = operator_main(api, monkeypatch, replace(api.settings, enabled=False), capsys)
+    assert logging.root.manager.disable == before
+    assert code == 1 and result["stage"] == stage and result["reason"] == reason
+    assert result["checkout_enabled"] is False
+    output = json.dumps(result)
+    assert private not in output and "mysql://" not in output
+    assert api.settings.credentials_file not in output and api.settings.token_key_file not in output
+    if damage == "missing_table":
+        assert result["missing_tables"] == ["billing_purchases"]
+
+
+def test_operator_logging_restores_stricter_existing_threshold(api, monkeypatch):
+    import logging
+    ops = operator_module()
+    monkeypatch.setattr(api.m.adapter, "PlayClient", lambda settings: SimpleNamespace(
+        catalog_ready=lambda: False, close=lambda: None))
+    original = logging.root.manager.disable
+    try:
+        logging.disable(logging.CRITICAL + 20)
+        result = ops.check_setup(replace(api.settings, enabled=False))
+        assert not result["ok"] and logging.root.manager.disable == logging.CRITICAL + 20
+    finally:
+        logging.disable(original)

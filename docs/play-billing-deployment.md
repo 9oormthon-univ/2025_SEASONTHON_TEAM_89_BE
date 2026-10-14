@@ -45,6 +45,47 @@ Google의 obfuscated account ID를 앱과 같은 `SHA-256(인증된 user_id)`로
 
 Google Cloud에서 Android Publisher API와 해당 앱의 Play Console 서비스 계정 연결이 필요하다. 서비스 계정에는 이 앱의 상품 조회·주문/구독 조회·구매 승인에 필요한 권한을 부여해야 한다. JSON 파일이 존재하는 것만으로 권한 검증이 완료된 것은 아니다. Pub/Sub push 서비스 계정과 Play 구매 검증 서비스 계정은 역할이 다르다. 이번 코드 작성은 기존 운영 자격 증명을 읽거나 새 운영 키·계정·권한을 생성하지 않았다.
 
+Google Cloud 프로젝트에서 Google Play Developer API를 활성화하고, Play Console의 사용자 및 권한에서 구매 검증 서비스 계정에 해당 앱의 금융 데이터·주문 조회 및 주문·구독 관리 권한을 부여한다. 개발자 계정 자체를 Cloud 프로젝트에 연결하는 예전 절차는 더 이상 필요하지 않다. [공식 API 설정 안내](https://developers.google.com/android-publisher/getting_started).
+
+기존 서버 루트의 `.env`가 로드되므로 위 결제 환경변수는 여기에 추가하거나 서버 프로세스의 환경으로 전달할 수 있다. 구매 검증용 JSON은 Firebase 알림 설정만으로 자동 지정되지 않으며, 실제 Play 권한을 가진 파일을 `GOOGLE_PLAY_SERVICE_ACCOUNT_FILE`에 별도로 지정한다. `GOOGLE_PLAY_TOKEN_KEY_FILE`은 새 구매 토큰 저장을 위한 Fernet 암호화 키 파일이다. 이미 영수증이 저장된 서버에서는 기존 복호화 키를 보존해야 한다. RTDN 값은 실제 설정한 인증된 Pub/Sub push의 audience·서비스 계정·구독 리소스와 일치해야 한다.
+
+### 첫 설정
+
+1. 기존 Google 서비스 계정 JSON이 있다면 그 계정의 이메일과 Cloud 프로젝트를 확인한다. Play Console에서 해당 앱의 구매 검증 권한을 별도로 부여해야 한다. JSON 파일은 서버의 비밀 파일 경로에 보관한다.
+2. 아래 명령은 현재 실행 사용자의 `~/.config/weheome-billing/purchase-token.key`를 새로 만든다. 기존 파일은 덮어쓰지 않고 키 원문을 출력하지 않는다. 서버 실행 사용자가 이 파일을 읽을 수 있어야 한다.
+
+```bash
+python - <<'PY'
+import os
+from pathlib import Path
+from cryptography.fernet import Fernet
+
+directory = Path.home() / ".config" / "weheome-billing"
+directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+filename = directory / "purchase-token.key"
+try:
+    fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    print("기존 암호화 키 파일을 유지합니다.")
+else:
+    with os.fdopen(fd, "wb") as output:
+        output.write(Fernet.generate_key() + b"\n")
+    print("암호화 키 파일을 생성했습니다.")
+PY
+```
+
+3. Google Cloud에서 RTDN topic과 인증된 push subscription을 구성한다. endpoint와 audience는 `https://wiheome.ajb.kr/api/billing/google-play/rtdn`으로 맞출 수 있다. push 인증에 실제 지정한 서비스 계정 이메일과 subscription 리소스 이름을 기록한다. Google Play 알림 발행 계정에 topic의 Pub/Sub Publisher 권한을 부여하고 Play Console의 수익 창출 설정에서 해당 topic을 연결한다. [RTDN 설정](https://developer.android.com/google/play/billing/getting-ready#configure-rtdn), [인증된 push 설정](https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions).
+4. 다음은 `.env` 형식 예시다. `PROJECT_ID`, 서비스 계정 이메일, 서버 파일 경로와 subscription 이름은 실제 설정으로 바꾼다. `/home/ajb`는 해당 개발 서버의 사용자 홈 예시이며, 서버 실행 사용자나 저장 경로가 다르면 실제 절대 경로를 사용한다.
+
+```dotenv
+GOOGLE_PLAY_BILLING_ENABLED=false
+GOOGLE_PLAY_SERVICE_ACCOUNT_FILE=/home/ajb/.config/weheome-billing/play-service-account.json
+GOOGLE_PLAY_TOKEN_KEY_FILE=/home/ajb/.config/weheome-billing/purchase-token.key
+GOOGLE_PLAY_RTDN_AUDIENCE=https://wiheome.ajb.kr/api/billing/google-play/rtdn
+GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL=push-account@PROJECT_ID.iam.gserviceaccount.com
+GOOGLE_PLAY_RTDN_SUBSCRIPTION=projects/PROJECT_ID/subscriptions/weheome-billing-rtdn
+```
+
 기존 서버에서 변경을 반영한 뒤 의존성을 설치하고 **서버 관리자가 명시적으로** 새 billing 테이블만 생성한다. 애플리케이션 시작 시 자동 migration은 수행하지 않는다.
 
 ```bash
@@ -54,6 +95,12 @@ python -m app.billing_ops check
 ```
 
 `check`는 암호화 키, 테이블, 서비스 계정 OAuth 접근과 세 상품의 활성 상태·가격·한국 지역·월/연 기간·평생 구매 옵션을 검증한다. 실패 시 안전한 오류 코드만 출력한다. `checkout_enabled: false` 상태에서 서버 기본 연결을 검증할 수 있다. 코드의 `false` 기본값을 지우거나 요청에서 `verified/ad_free` Boolean을 신뢰하도록 바꾸면 안 된다.
+
+### 설치·테이블 생성 후 `check`가 실패하는 경우
+
+의존성 설치나 `migrate` 성공은 Google Play 연결 준비 완료를 뜻하지 않는다. 판매 OFF는 `check` 실패 원인이 아니다. 결제용 환경변수와 두 비밀 파일, RTDN 설정이 먼저 필요하다. 검사 출력에 표시되는 누락된 변수 이름과 실패 단계를 확인하고 수정한 뒤 같은 가상환경에서 `python -m app.billing_ops check`를 다시 실행한다. 이 명령은 비밀값·실제 파일 경로·Google 응답 원문·예외 원문을 표시하지 않는다.
+
+`stage: configuration`, `reason: missing_environment`이면 `missing_env`의 변수들을 먼저 설정한다. `invalid_fields`는 해당 변수의 절대 경로·파일 존재·읽기 권한·이메일 또는 subscription 형식 문제를 이름과 정해진 reason으로 표시한다. `stage: schema`는 새 billing 테이블, `stage: token_key`는 암호화 키 파일, `stage: catalog`는 Google 접근 또는 활성 상품 조건을 확인해야 한다는 뜻이다. 설정 누락은 DB·Google 연결과 키 내용 읽기 전에 종료한다.
 
 ## RTDN과 환불 회수
 
@@ -87,3 +134,5 @@ python -m pytest -q
 2026-10-13 로컬 검증: billing 보안/오프라인 테스트 99개와 기존 회귀 테스트 75개, 총 **174개 통과** (7.45초). 실제 google-auth 라이브러리의 합성 서비스 계정 서명·OAuth refresh도 MockTransport로 검증했다. 활성 사용자 JWT, 계정 간 토큰 이전, 대기 결제, 승인 실패, 5분 임대 경계, 만료 경계의 자동 갱신, 회수 후 재전송, RTDN 인증/재시도/중복, 구매 토큰 암호화·키 교체를 확인했다. 외부 네트워크·운영 MySQL·실제 Google 구매 호출은 없었다. Python 소스 컴파일과 `git diff --check`도 통과했다. 기존 프레임워크 deprecation 경고 22개는 남아 있으며, 실제 서버 배포·라이선스 구매/알림 검증·개인정보 삭제 연동은 아직 완료되지 않았다.
 
 검증 가상환경의 실제 설치 버전: Python 3.10.12, `google-auth` 2.62.0, `cryptography` 50.0.2, `requests` 2.34.2, `pytest` 9.1.1. `google-auth[requests]`와 `cryptography`는 `requirements.txt`에 위 검증 버전으로 고정했다.
+
+2026-10-14 진단 개선 검증: 설정 누락·잘못된 파일 metadata·단계별 오류 비노출·로그 차단/복구·판매 OFF 점검 성공 등 18개 테스트를 추가했다. 전체 192개 테스트가 통과했고 독립 읽기 검토에서 새로운 문제는 발견되지 않았다. 운영 설정이나 키 파일, 구매 데이터, HTTP 판매 게이트는 변경하지 않았다.
