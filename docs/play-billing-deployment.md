@@ -9,7 +9,7 @@
 세 경로 모두 기존 `require_current_user`의 Bearer JWT로 활성 사용자 계정을 인증한다. 요청 본문의 사용자 ID를 받지 않는다.
 
 - `GET /api/billing/config`: `api_version: 1`, `google_play_ready`, 세 `product_ids`를 반환한다. 비활성화, 누락된 설정/테이블, Google 자격 증명·상품 조회 실패는 `google_play_ready: false`다.
-- `GET /api/billing/entitlement`: `user_id`, `verified`, `ad_free`, `product_id`, `expires_at`, `cache_until`을 반환한다. 유효한 Google 검증 결과만 사용하며 임대 기간은 최대 5분이다. 구독은 실제 Google 만료 시간 이내이고, 평생 이용권도 5분마다 새 검증이 필요하다.
+- `GET /api/billing/entitlement`: `user_id`, `verified`, `ad_free`, `product_id`, `expires_at`, `cache_until` 및 표시용 `subscription_state`, `auto_renewing`, `next_billing_at`을 반환한다. 유효한 Google 검증 결과만 사용하며 임대 기간은 최대 5분이다. 구독은 실제 Google 만료 시간 이내이고, 평생 이용권도 5분마다 새 검증이 필요하다.
 - `POST /api/billing/google-play/verify`: `{package_name, product_id, product_type, purchase_token}`를 받고 `verified`, `product_id`, `purchase_token_sha256`, `acknowledged`, `entitlement`를 반환한다. 패키지/상품/유형을 허용 목록으로 확인한다. 완료되지 않은 결제는 승인하지 않고 이용권도 부여하지 않는다.
 
 | 상품 ID | 유형 | 기본 요금제/구매 옵션 | 한국 가격 |
@@ -22,9 +22,13 @@
 
 구독은 ACTIVE/IN_GRACE_PERIOD 및 취소했지만 기간이 남은 CANCELED만 허용한다. PENDING/ON_HOLD/PAUSED/EXPIRED는 접근을 허용하지 않는다. 평생 상품은 PURCHASED, `buy` 옵션, 미소비 상태, 수량 1, 환불 가능 수량 1을 요구한다. 대여·예약·할인·알 수 없는 응답은 거절한다.
 
+현재 유료 구독의 `subscription_state`는 Google 상태에서 `SUBSCRIPTION_STATE_`를 뺀 `ACTIVE`, `CANCELED`, `IN_GRACE_PERIOD` 등의 코드다. `auto_renewing`은 Google의 명시적 boolean만 사용하며 값이 없거나 형식이 다르면 null이다. `next_billing_at`은 `ACTIVE`이고 자동 갱신이 true인 미래 `expiryTime`만 예상 결제일로 제공한다. 취소·유예·보류 상태의 만료 시각을 결제일로 표시하지 않는다. 기본 플랜과 평생 이용권의 세 표시 필드는 null이고 평생 이용권은 추가 결제일이 없다. 실제 결제 처리 시각이나 금액을 보장하는 필드가 아니며 앱은 최종 구독 정보를 Google Play에서 확인할 수 있도록 안내한다. [Google 구독 상태와 자동 갱신 필드](https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.subscriptionsv2).
+
+한 요청 안에서 이미 승인된 구매·기간을 Google로 검증했다면 같은 응답을 표시에도 사용한다. 신규 구매를 승인한 경우에는 승인 대기 중 발생한 취소·알림을 놓치지 않도록 현재 Google 상태를 다시 조회한다. 새 이용권 조회 요청에서도 선택한 유료 구독을 한 번 더 조회해 최신 갱신·취소 상태를 반영한다. 표시 조회의 일시적 Google 장애는 기존에 검증한 5분 임대의 남은 시간만 유지하고 세 표시 필드는 null로 반환한다. 임대 기간을 연장하거나 로컬 만료 시각에서 결제일을 추측하지 않는다. 잘못되거나 존재하지 않는 Google 구매 응답은 해당 이용권을 활성화하지 않는다. 이 표시는 새 DB 컬럼·마이그레이션·환경변수를 요구하지 않으며 서버 코드를 pull하고 기존 방식으로 재시작하면 적용된다.
+
 Google의 obfuscated account ID를 앱과 같은 `SHA-256(인증된 user_id)`로 확인한다. 구매 토큰 해시는 전역 고유 키이고, 소유권은 다른 계정으로 이전하지 않는다. 구매 토큰 원문은 서버 비밀 파일의 Fernet 키로 암호화해 저장하고 오류·로그·HTTP validation 응답에 출력하지 않는다. 계정 삭제 후에도 소유권 기록을 유지해 토큰 재사용을 막는다. 교체 구매가 완료된 경우 이전 토큰을 소유권이 남는 tombstone으로 처리한다. 대기 중 교체 구매 때문에 기존 이용권을 회수하지 않는다. [Google 결제 보안 지침](https://developer.android.com/google/play/billing/security).
 
-**실제 활성화 전 개인정보 처리와 계정 삭제 연동을 정해야 한다.** 새 테이블은 앱 사용자 UUID, account hash, 토큰 hash와 암호화된 구매 토큰, 상품/기간/검증/회수 기록을 저장한다. 현재 코드의 소유권 tombstone은 계정 삭제 후에도 UUID와 암호화된 토큰을 유지하며, 기존 계정 삭제 흐름에 구매 데이터 삭제·축소 처리를 자동으로 추가하지 않았다. 운영자는 개인정보처리방침과 Play Data safety에 실제 구매 이력 처리를 반영하고, 계정 삭제 시 필요한 소유권 해시만 남기는 방식·암호화된 토큰 제거·법적으로 필요한 기록의 최소화와 보관 기간을 결정해 연동/검증해야 한다. 이 문서는 특정 법정 보관 기간이나 무기한 보관 권한을 주장하지 않는다. 삭제/비활성 계정에 RTDN만으로 새 이용권을 부여하지 않는다.
+구매 테이블은 활성 계정의 앱 사용자 UUID, account hash, 토큰 hash와 암호화된 구매 토큰, 상품/기간/검증/회수 기록을 저장한다. 기존 계정 삭제 흐름은 같은 DB 트랜잭션 안에서 구매 계정 매핑, UUID, 암호화 구매 토큰, 상품·상태·시각을 제거한다. 삭제 이후에는 다른 계정의 영수증 재사용을 막는 토큰 SHA-256과 계정에 재할당할 수 없는 고정 삭제 표식만 남는다. 운영자는 개인정보처리방침과 Play Data safety에 실제 구매 이력 처리와 삭제 동작을 반영해야 한다. 이 문서는 특정 법정 보관 기간이나 무기한 보관 권한을 주장하지 않는다. 삭제/비활성 계정에 RTDN만으로 새 이용권을 부여하지 않는다.
 
 구매 기록을 원자적으로 저장한 뒤 서버에서 승인한다. 승인 실패는 유료 임대 기간을 발급하지 않고 다음 요청/RTDN에서 Google 상태를 다시 확인한다. 같은 계정의 재전송은 멱등 처리한다. 갱신된 구독을 신규 결제로 다시 승인하지 않으며, 평생 상품은 소비하지 않는다.
 
@@ -174,3 +178,5 @@ python -m app.billing_ops status
 오프라인 테스트는 운영 DB·네트워크를 차단한 SQLite를 사용한다. 실제 MySQL FOR UPDATE 동시성은 별도 통합 검증 대상이며 라이선스 구매를 대체하지 않는다. 공개 HTML은 Android 저장소의 최신 안내와 동기화했다. 실제 서버/호스팅 배포 완료 여부는 배포 기록을 확인한다.
 
 2026-10-15 최종 로컬 검증: 전체 `tests` **235개 통과**. 판매 대상 제한, 삭제 중 Google 조회·승인 응답, 토큰 최소화/재등록 거부, 최신 상태 재조회, 승인 실패 격리·다음 영수증 처리, 자동 작업 종료 및 읽기 상태 명령을 확인했다. 운영 DB·네트워크 접근 없이 검증했으며 기존 프레임워크 deprecation 경고 24개가 남는다.
+
+2026-10-15 플랜 표시 추가 검증: billing 테스트 **148개**, 전체 `tests` **252개 통과**. Google 갱신 boolean 및 상태별 예상 결제일, 유효 임대 중 취소·보류 재조회, 다른 유효 플랜 선택, Google 장애 시 임대 연장 방지와 표시 null, 표시 조회 중 만료·계정 삭제를 확인했다. 구매 승인 대기 중 같은 검증 시각·만료일의 취소 RTDN이 저장되어도 오래된 자동 갱신·결제일을 응답하지 않는 회귀를 확인했다. 새 DB 스키마나 운영 환경변수 없이 구현했으며 기존 deprecation 경고 24개가 남는다.

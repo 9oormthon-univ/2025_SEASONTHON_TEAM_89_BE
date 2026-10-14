@@ -132,6 +132,9 @@ class PurchaseSnapshot:
     linked_token: Optional[str] = field(default=None, repr=False)
     order_id: Optional[str] = field(default=None, repr=False)
     revoked: bool = False
+    subscription_state: Optional[str] = None
+    auto_renewing: Optional[bool] = None
+    next_billing_at: Optional[datetime] = None
 
 
 def _object(value: Any) -> dict:
@@ -238,6 +241,16 @@ def snapshot(
             raise PlayError("invalid_purchase")
         if pending and acknowledged:
             raise PlayError("invalid_purchase")
+        # Display data never infers renewal from entitlement or expiry alone.
+        # Missing flags remain unknown; strings/integers are not boolean truth.
+        auto_renewing = plan.get("autoRenewEnabled")
+        if type(auto_renewing) is not bool:
+            auto_renewing = None
+        next_billing_at = (
+            expires_at if state == "SUBSCRIPTION_STATE_ACTIVE"
+            and auto_renewing is True and expires_at is not None and expires_at > now
+            else None
+        )
         return PurchaseSnapshot(
             product_id, product_type, account_id,
             state in entitlement_states and expires_at is not None and expires_at > now,
@@ -245,6 +258,9 @@ def snapshot(
             expires_at=expires_at,
             linked_token=None if pending else _optional_text(payload.get("linkedPurchaseToken")),
             order_id=_optional_text(item.get("latestSuccessfulOrderId")),
+            subscription_state=state.removeprefix("SUBSCRIPTION_STATE_"),
+            auto_renewing=auto_renewing,
+            next_billing_at=next_billing_at,
         )
 
     item = _one_item(payload.get("productLineItem"))

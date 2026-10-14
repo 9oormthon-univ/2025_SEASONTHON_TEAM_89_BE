@@ -68,6 +68,27 @@ class BillingService:
     def __init__(self, db, play, codec: TokenCipher, now=None):
         self.db, self.play, self.codec = db, play, codec
         self.now = now or (lambda: datetime.now(UTC))
+        # Only this request's Google-verified public plan data is retained.
+        # A GET in another request re-reads Google; no new database columns or
+        # global cache of purchase tokens/account identifiers is required.
+        self._subscription_details = {}
+
+    @staticmethod
+    def _paid(record, now):
+        return bool(record and record.active and record.acknowledged and record.checked_at
+                    and utc(record.checked_at) + LEASE > now
+                    and not record.revoked_at and not record.superseded_by_hash
+                    and record.product_id in PRODUCTS
+                    and (record.product_type == "inapp"
+                         or (record.expires_at and utc(record.expires_at) > now)))
+
+    def _plan_details(self, record):
+        saved = self._subscription_details.get(record.token_sha256)
+        if saved is None or saved[:3] != (
+            record.product_id, iso(record.checked_at), iso(record.expires_at)
+        ):
+            return None
+        return saved[3]
 
     def _active_user(self, user_id: str):
         # Deletion and receipt writes always lock the user before the purchase.
@@ -163,7 +184,21 @@ class BillingService:
         except Exception:
             self.db.rollback()
             raise
+        if record.product_type == "subs":
+            # Bind display data to the state just written, before acknowledgement
+            # releases this request into another external call.
+            self._subscription_details[digest] = (
+                record.product_id, iso(record.checked_at), iso(record.expires_at),
+                {"subscription_state": purchase.subscription_state,
+                 "auto_renewing": purchase.auto_renewing,
+                 "next_billing_at": iso(purchase.next_billing_at)},
+            )
         if record.active and not purchase.acknowledged:
+            # RTDN can replace ACTIVE with CANCELED while acknowledgement waits.
+            # MySQL DATETIME can give both writes the same checked_at/expiry;
+            # fingerprints cannot prove this older snapshot is still current.
+            # The entitlement response must read current Google state again.
+            self._subscription_details.pop(digest, None)
             try:
                 self.play.acknowledge(purchase.product_id, purchase.product_type, token)
             except PlayError:
@@ -181,6 +216,7 @@ class BillingService:
         return record
 
     def _mark_inactive(self, user_id, digest, *, revoked=False):
+        self._subscription_details.pop(digest, None)
         try:
             self._active_user(user_id)
         except BillingError:
@@ -211,7 +247,7 @@ class BillingService:
                 "purchase_token_sha256": token_hash(token), "acknowledged": bool(record.acknowledged),
                 "entitlement": self.entitlement(user_id)}
 
-    def _reconcile(self, record):
+    def _reconcile(self, record, *, metadata_only=False):
         if record.user_id == DELETED_BILLING_OWNER or record.revoked_at or record.superseded_by_hash:
             return record
         owner, digest = record.user_id, record.token_sha256
@@ -220,6 +256,15 @@ class BillingService:
             return self._accept(owner, token,
                                 self._fetch_for_user(owner, record.product_id, record.product_type, token))
         except PlayError as error:
+            if metadata_only and error.code == "unavailable":
+                # An optional display refresh cannot extend a paid lease. Keep
+                # only its previously verified remainder, with unknown metadata.
+                self.db.rollback()
+                self._subscription_details.pop(digest, None)
+                return (self.db.query(BillingPurchase).filter_by(token_sha256=digest)
+                        .populate_existing().first())
+            if metadata_only and error.code == "invalid_purchase":
+                return self._mark_inactive(owner, digest)
             if error.code != "not_found":
                 raise BillingError() from None
             return self._mark_inactive(owner, digest)
@@ -242,30 +287,39 @@ class BillingService:
             if (force or not record.checked_at or utc(record.checked_at) + LEASE <= now or
                 (record.active and record.expires_at and utc(record.expires_at) <= now)):
                 record = self._reconcile(record)
-            if (record.active and record.acknowledged and record.checked_at and
-                utc(record.checked_at) + LEASE > now and
-                (record.product_type == "inapp" or (record.expires_at and utc(record.expires_at) > now))):
+            if self._paid(record, now):
                 candidates.append(record)
-        if not candidates:
+        metadata_attempted = set()
+        while candidates:
+            # Lifetime wins over overlapping subscriptions and has no renewal.
+            record = max(candidates, key=lambda p: (p.product_type == "inapp",
+                         utc(p.expires_at) if p.expires_at else datetime.max.replace(tzinfo=UTC)))
+            self._active_user(user_id)
+            record = self._owned(record.token_sha256, user_id, lock=True)
+            now = utc(self.now())
+            if not self._paid(record, now):
+                candidates = [candidate for candidate in candidates if self._paid(candidate, now)]
+                continue
+            if (record.product_type == "subs" and self._plan_details(record) is None
+                    and record.token_sha256 not in metadata_attempted):
+                metadata_attempted.add(record.token_sha256)
+                self._reconcile(record, metadata_only=True)
+                now = utc(self.now())
+                candidates = [candidate for candidate in records if self._paid(candidate, now)]
+                continue
+            break
+        else:
             self._active_user(user_id)
             self.db.commit()
             return {"user_id": user_id, "verified": True, "ad_free": False, "product_id": None,
-                    "expires_at": None, "cache_until": iso(now + LEASE)}
-        # Lifetime wins if the Play account has overlapping purchases; don't charge for another plan.
-        record = max(candidates, key=lambda p: (p.product_type == "inapp",
-                     utc(p.expires_at) if p.expires_at else datetime.max.replace(tzinfo=UTC)))
-        self._active_user(user_id)
-        record = self._owned(record.token_sha256, user_id, lock=True)
-        if not (record.active and record.acknowledged and record.checked_at and
-                utc(record.checked_at) + LEASE > now and
-                (record.product_type == "inapp" or (record.expires_at and utc(record.expires_at) > now))):
-            self.db.commit()
-            return {"user_id": user_id, "verified": True, "ad_free": False, "product_id": None,
-                    "expires_at": None, "cache_until": iso(now + LEASE)}
+                    "expires_at": None, "cache_until": iso(now + LEASE),
+                    "subscription_state": None, "auto_renewing": None, "next_billing_at": None}
         until = min(now + LEASE, utc(record.checked_at) + LEASE,
                     utc(record.expires_at) if record.expires_at else now + LEASE)
         result = {"user_id": user_id, "verified": True, "ad_free": True,
                 "product_id": record.product_id, "expires_at": iso(record.expires_at), "cache_until": iso(until)}
+        result.update(self._plan_details(record) or {
+            "subscription_state": None, "auto_renewing": None, "next_billing_at": None})
         self.db.commit()
         return result
 
