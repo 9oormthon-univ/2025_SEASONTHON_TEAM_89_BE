@@ -7,6 +7,9 @@ apple_push/
 firebase/
 *firebase-adminsdk*.json
 
+# Google Play 서비스 계정과 구매 토큰 암호화 키 — 커밋 금지
+/.billing-secrets/
+
 #.env
 *.env
 
