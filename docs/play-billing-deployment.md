@@ -37,6 +37,7 @@ Google의 obfuscated account ID를 앱과 같은 `SHA-256(인증된 user_id)`로
 | 설정 | 의미 |
 | --- | --- |
 | `GOOGLE_PLAY_BILLING_ENABLED` | 기본 `false`. 연결/권한/상품/알림/구매 검증 완료 후 운영자가 명시적으로 활성화 |
+| `GOOGLE_PLAY_BILLING_TEST_USER_IDS` | 선택 설정. 쉼표로 구분한 위허메 사용자 UUID. 전체 판매 OFF에서도 이 JWT 계정만 구매·복원 가능. Google 라이선스 테스터와 별도 설정 |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_FILE` | Google Play Developer API용 기존 서비스 계정 JSON의 절대 경로 |
 | `GOOGLE_PLAY_TOKEN_KEY_FILE` | Fernet 구매 토큰 암호화 키 파일의 절대 경로. 첫 줄은 현재 쓰기 키, 추가 줄은 복호화용 이전 키 |
 | `GOOGLE_PLAY_RTDN_AUDIENCE` | Pub/Sub push OIDC 토큰에서 요구할 정확한 audience |
@@ -127,7 +128,7 @@ python -m app.billing_ops check
 
 Play Console의 RTDN을 구독/일회성 상품/voided 모두 수신하도록 구성하고 테스트 알림이 이 인증 경로에 도달하는지 확인한다. 운영자가 DLQ와 미승인 결제 모니터링도 구성해야 한다. [Pub/Sub push 인증](https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions), [RTDN 참조](https://developer.android.com/google/play/billing/rtdn-reference).
 
-알림 유실 보완을 위해 서버 스케줄러에서 다음 작업을 정기적으로 실행한다. 이 작업은 과거 30일 또는 마지막 성공 지점에서 1시간 중첩해 조회하고 모든 페이지를 처리한다. 커서는 전체 처리가 성공한 뒤에만 전진한다.
+판매가 켜져 있거나 테스트 사용자 UUID가 설정된 단일-worker API에서는 15분마다 미승인 구매 재시도와 회수 동기화를 서로 다른 DB 세션에서 실행한다. 실패한 영수증은 다음 회차에 재시도하며 다른 영수증의 승인이나 회수 작업을 막지 않는다. 판매 OFF이고 테스트 계정이 없으면 자동 작업은 DB·Google·비밀 파일에 접근하지 않는다. 여러 worker로 늘릴 때는 별도 작업자로 분리하거나 DB 작업 잠금을 추가해야 한다. 수동 회수 동기화도 가능하다. 이 작업은 과거 30일 또는 마지막 성공 지점에서 1시간 중첩해 조회하고 모든 페이지를 처리한다. 커서는 전체 처리가 성공한 뒤에만 전진한다.
 
 ```bash
 python -m app.billing_ops sync-voided
@@ -155,3 +156,21 @@ python -m pytest -q
 검증 가상환경의 실제 설치 버전: Python 3.10.12, `google-auth` 2.62.0, `cryptography` 50.0.2, `requests` 2.34.2, `pytest` 9.1.1. `google-auth[requests]`와 `cryptography`는 `requirements.txt`에 위 검증 버전으로 고정했다.
 
 2026-10-14 진단 개선 검증: 설정 누락·잘못된 파일 metadata·단계별 오류 비노출·로그 차단/복구·판매 OFF 점검 성공 등 18개 테스트를 추가했다. 전체 192개 테스트가 통과했고 독립 읽기 검토에서 새로운 문제는 발견되지 않았다. 운영 설정이나 키 파일, 구매 데이터, HTTP 판매 게이트는 변경하지 않았다.
+
+
+## 2026-10-15 판매 전 보완
+
+계정 삭제는 활성 사용자 행을 잠근 같은 DB 트랜잭션에서 구매 계정 매핑과 암호화 구매 토큰·상품·상태·시각을 제거한다. 토큰 SHA-256과 계정에 재할당할 수 없는 고정 삭제 표식만 남겨 다른 계정의 영수증 재사용을 거부한다. 키 파일이나 Google 접근이 없어도 삭제할 수 있다. 삭제 표식은 알림·회수·승인 재시도에서 복호화하거나 활성화하지 않는다. 계정 삭제와 Google 조회/승인이 겹쳐도 활성 사용자와 최신 구매 행을 재검사한다. 최신 Google 상태 조회부터 구매 저장까지 사용자→구매 행 잠금을 유지한다. 계정 삭제는 Google 구독 취소·환불을 실행하지 않으며 탈퇴 후 새 위허메 계정에서 이전 구매를 복원할 수 없다. 앱 확인 안내와 공개 안내에 같은 정책을 표시한다. CSV 파일 삭제는 기존처럼 DB 밖의 파일 작업이므로 파일·DB 전체 원자성을 보장하지 않는다.
+
+전체 판매는 `GOOGLE_PLAY_BILLING_ENABLED=false`로 유지하면서 테스트할 **위허메 계정 UUID**만 `GOOGLE_PLAY_BILLING_TEST_USER_IDS`에 넣는다. Google Play 이메일을 이 변수에 넣으면 안 된다. 잘못된 UUID 목록은 모든 테스트 허용을 차단한다. 이 제한은 Google 라이선스 테스트를 대신하지 않으므로 Play Console의 라이선스 테스터 등록과 휴대폰 구매창의 테스트 표시·테스트 결제수단도 확인한다. UUID 허용만으로 실결제 비용이 면제되지 않는다. 판매를 켜거나 테스트 UUID를 바꾼 뒤 서버를 재시작한다. 현재 서버 재시작 명령의 명시적 `GOOGLE_PLAY_BILLING_ENABLED=false`는 .env보다 우선하므로 나중에 전체 판매를 켤 때는 그 명령도 변경해야 한다.
+
+```bash
+python -m app.billing_ops check
+python -m app.billing_ops status
+```
+
+`status`는 DB만 읽어 전체 판매 여부, 테스트 계정 수, 마지막 성공 회수 조회 UTC 시각, 활성 계정의 미승인 유효 구매 수를 표시한다. 사용자 UUID·토큰·키·Google 응답은 출력하지 않는다. 동기화가 성공하지 않았으면 시각은 null이다. 운영 로그의 `billing_acknowledgement_retry` 실패 개수 및 `billing_*_failed` 고정 코드를 확인한다. 15분 회차를 계속 실패하면 운영자가 원인을 해결하고 수동 재시도한다. Cloud DLQ/경보는 별도 설정이며 자동 생성하지 않는다.
+
+오프라인 테스트는 운영 DB·네트워크를 차단한 SQLite를 사용한다. 실제 MySQL FOR UPDATE 동시성은 별도 통합 검증 대상이며 라이선스 구매를 대체하지 않는다. 공개 HTML은 Android 저장소의 최신 안내와 동기화했다. 실제 서버/호스팅 배포 완료 여부는 배포 기록을 확인한다.
+
+2026-10-15 최종 로컬 검증: 전체 `tests` **235개 통과**. 판매 대상 제한, 삭제 중 Google 조회·승인 응답, 토큰 최소화/재등록 거부, 최신 상태 재조회, 승인 실패 격리·다음 영수증 처리, 자동 작업 종료 및 읽기 상태 명령을 확인했다. 운영 DB·네트워크 접근 없이 검증했으며 기존 프레임워크 deprecation 경고 24개가 남는다.

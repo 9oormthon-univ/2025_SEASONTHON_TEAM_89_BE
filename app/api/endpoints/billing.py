@@ -53,8 +53,8 @@ def schema_ready(db) -> bool:
     return all(inspector.has_table(table.name) for table in BILLING_TABLES)
 
 
-def service_for(db, settings: BillingSettings, *, require_enabled=True) -> BillingService:
-    if require_enabled and not settings.enabled:
+def service_for(db, settings: BillingSettings, *, require_enabled=True, user_id=None) -> BillingService:
+    if require_enabled and not settings.checkout_enabled_for(user_id):
         raise BillingError("billing_not_ready")
     if not schema_ready(db):
         raise BillingError("billing_not_configured")
@@ -80,12 +80,13 @@ def catalog_ready(play) -> bool:
 @router.get("/config", summary="광고 제거 판매 준비 상태")
 def config(db=Depends(get_db), current_user=Depends(require_current_user), settings=Depends(get_settings)):
     ready = False
-    if settings.enabled:
+    user_id = str(current_user.user_id)
+    if settings.checkout_enabled_for(user_id):
         try:
-            service = service_for(db, settings)
+            service = service_for(db, settings, user_id=user_id)
             ready = catalog_ready(service.play)
             if ready:
-                service.register_account(str(current_user.user_id))
+                service.register_account(user_id)
         except Exception:
             db.rollback()
             ready = False
@@ -95,7 +96,8 @@ def config(db=Depends(get_db), current_user=Depends(require_current_user), setti
 @router.get("/entitlement", summary="검증된 광고 제거 이용권")
 def entitlement(db=Depends(get_db), current_user=Depends(require_current_user), settings=Depends(get_settings)):
     try:
-        return service_for(db, settings).entitlement(str(current_user.user_id))
+        user_id = str(current_user.user_id)
+        return service_for(db, settings, user_id=user_id).entitlement(user_id)
     except Exception as error:
         db.rollback()
         raise_safe(error)
@@ -144,7 +146,7 @@ async def verify(request: Request, db=Depends(get_db), current_user=Depends(requ
     verify_fields(data)
     user_id = str(current_user.user_id)
     try:
-        return await run_in_threadpool(lambda: service_for(db, settings).verify(
+        return await run_in_threadpool(lambda: service_for(db, settings, user_id=user_id).verify(
             user_id, data["product_id"], data["product_type"], data["purchase_token"]))
     except Exception as error:
         await run_in_threadpool(db.rollback)

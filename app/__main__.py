@@ -11,20 +11,22 @@ from app.api import routers
 from app.api.endpoints import legal
 from app.services.check_fraud import start_processing
 from app.services.model_training import training_loop
+from app.services.billing_maintenance import billing_maintenance_loop
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 시작 시 백그라운드 태스크 시작"""
     await start_processing()
-    task = None
+    tasks = [asyncio.create_task(billing_maintenance_loop())]
     if os.environ.get("ML_AUTO_TRAIN", "true").lower() in {"true", "1", "yes"}:
-        task = asyncio.create_task(training_loop())
+        tasks.append(asyncio.create_task(training_loop()))
     try:
         yield
     finally:
-        if task is not None:
+        for task in tasks:
             task.cancel()
+        for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
 

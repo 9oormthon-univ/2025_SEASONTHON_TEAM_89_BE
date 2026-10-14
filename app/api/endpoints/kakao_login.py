@@ -17,7 +17,9 @@ from app.services.jwt_service import jwt_service
 from app.services.family_group_service import family_group_service
 from app.services.ml_data_storage import delete_user_labeled_csv_files, delete_test_account_csv_files
 from app.services.test_account_boundary import is_test_account
+from app.services.billing_account_deletion import delete_billing_account_data
 from app.repositories.user_repository import get_user_repository
+from app.models.user import User
 from app import settings
 import logging
 
@@ -129,12 +131,17 @@ async def delete_user(
         user_repo = get_user_repository(db)
         
         # 1. 사용자 조회
-        user = user_repo.get_by_user_id(request.user_id)
+        user = (db.query(User).filter_by(user_id=request.user_id, is_active=True)
+                .with_for_update().populate_existing().first())
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="사용자를 찾을 수 없습니다"
             )
+
+        # Flush billing cleanup before irreversible CSV removal. Verification
+        # uses the same User -> purchase lock order; this helper never commits.
+        delete_billing_account_data(db, request.user_id)
         
         logger.info(f"회원 탈퇴 시작: user_id={request.user_id}, kakao_id={user.kakao_id}")
         

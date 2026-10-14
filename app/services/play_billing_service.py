@@ -7,10 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 
 from app.models.play_billing import BillingAccount, BillingPurchase, BillingSyncState
 from app.models.user import User
+from app.services.billing_account_deletion import DELETED_BILLING_OWNER
 from app.services.play_billing_client import PRODUCTS, PlayError, snapshot
 
 UTC = timezone.utc
@@ -67,7 +69,17 @@ class BillingService:
         self.db, self.play, self.codec = db, play, codec
         self.now = now or (lambda: datetime.now(UTC))
 
+    def _active_user(self, user_id: str):
+        # Deletion and receipt writes always lock the user before the purchase.
+        # Refresh the identity map after external Google calls or another transaction.
+        user = (self.db.query(User).filter_by(user_id=user_id, is_active=True)
+                .populate_existing().with_for_update().first())
+        if user is None:
+            raise BillingError("purchase_account_unavailable", 409)
+        return user
+
     def register_account(self, user_id: str) -> None:
+        self._active_user(user_id)
         expected = token_hash(user_id)
         account = self.db.get(BillingAccount, user_id)
         if account is None:
@@ -81,11 +93,12 @@ class BillingService:
                     raise BillingError("purchase_account_mismatch", 409) from None
         elif not hmac.compare_digest(account.account_hash, expected):
             raise BillingError("purchase_account_mismatch", 409)
+        self.db.commit()
 
     def _owned(self, digest: str, user_id: str, *, lock=False):
         query = self.db.query(BillingPurchase).filter_by(token_sha256=digest)
         if lock:
-            query = query.with_for_update()
+            query = query.populate_existing().with_for_update()
         record = query.first()
         if record is not None and record.user_id != user_id:
             raise BillingError("purchase_account_mismatch", 409)
@@ -96,6 +109,13 @@ class BillingService:
                    else self.play.get_product(token))
         return snapshot(payload, product_id, product_type, utc(self.now()))
 
+    def _fetch_for_user(self, user_id: str, product_id: str, product_type: str, token: str):
+        # Serialize state reads as well as writes. Otherwise a delayed ACTIVE
+        # Google response could overwrite a newer HOLD/EXPIRED notification.
+        self._active_user(user_id)
+        self._owned(token_hash(token), user_id, lock=True)
+        return self._fetch(product_id, product_type, token)
+
     def _accept(self, user_id: str, token: str, purchase):
         if not hmac.compare_digest(purchase.account_id, token_hash(user_id)):
             raise BillingError("purchase_account_mismatch", 403)
@@ -104,6 +124,7 @@ class BillingService:
             raise BillingError("purchase_pending", 409)
         digest, now = token_hash(token), utc(self.now())
         try:
+            self._active_user(user_id)
             record = self._owned(digest, user_id, lock=True)
             if record is None:
                 record = BillingPurchase(token_sha256=digest, user_id=user_id,
@@ -147,12 +168,31 @@ class BillingService:
                 self.play.acknowledge(purchase.product_id, purchase.product_type, token)
             except PlayError:
                 # Never deliver a paid lease until acknowledgement succeeds. A retry re-queries Play.
+                self._active_user(user_id)
+                record = self._owned(digest, user_id, lock=True)
                 record.active = False
                 record.checked_at = None
                 self.db.commit()
                 raise BillingError("purchase_acknowledgement_pending") from None
+            self._active_user(user_id)
+            record = self._owned(digest, user_id, lock=True)
             record.acknowledged = True
             self.db.commit()
+        return record
+
+    def _mark_inactive(self, user_id, digest, *, revoked=False):
+        try:
+            self._active_user(user_id)
+        except BillingError:
+            self.db.rollback()
+            return (self.db.query(BillingPurchase).filter_by(token_sha256=digest)
+                    .populate_existing().first())
+        record = self._owned(digest, user_id, lock=True)
+        if record is not None:
+            record.active, record.checked_at = False, utc(self.now())
+            if revoked:
+                record.revoked_at = utc(self.now())
+        self.db.commit()
         return record
 
     def verify(self, user_id: str, product_id: str, product_type: str, token: str) -> dict:
@@ -162,7 +202,7 @@ class BillingService:
         self.register_account(user_id)
         self._owned(token_hash(token), user_id)
         try:
-            purchase = self._fetch(product_id, product_type, token)
+            purchase = self._fetch_for_user(user_id, product_id, product_type, token)
             record = self._accept(user_id, token, purchase)
         except PlayError as error:
             raise BillingError("invalid_purchase" if error.code in ("invalid_purchase", "not_found")
@@ -172,24 +212,21 @@ class BillingService:
                 "entitlement": self.entitlement(user_id)}
 
     def _reconcile(self, record):
-        if record.revoked_at or record.superseded_by_hash:
+        if record.user_id == DELETED_BILLING_OWNER or record.revoked_at or record.superseded_by_hash:
             return record
+        owner, digest = record.user_id, record.token_sha256
         token = self.codec.decrypt(record.token_encrypted)
         try:
-            return self._accept(record.user_id, token,
-                                self._fetch(record.product_id, record.product_type, token))
+            return self._accept(owner, token,
+                                self._fetch_for_user(owner, record.product_id, record.product_type, token))
         except PlayError as error:
             if error.code != "not_found":
                 raise BillingError() from None
-            record.active, record.checked_at = False, utc(self.now())
-            self.db.commit()
-            return record
+            return self._mark_inactive(owner, digest)
         except BillingError as error:
             if error.code != "purchase_pending":
                 raise
-            record.active, record.checked_at = False, utc(self.now())
-            self.db.commit()
-            return record
+            return self._mark_inactive(owner, digest)
 
     def entitlement(self, user_id: str, force=False) -> dict:
         self.register_account(user_id)
@@ -210,15 +247,27 @@ class BillingService:
                 (record.product_type == "inapp" or (record.expires_at and utc(record.expires_at) > now))):
                 candidates.append(record)
         if not candidates:
+            self._active_user(user_id)
+            self.db.commit()
             return {"user_id": user_id, "verified": True, "ad_free": False, "product_id": None,
                     "expires_at": None, "cache_until": iso(now + LEASE)}
         # Lifetime wins if the Play account has overlapping purchases; don't charge for another plan.
         record = max(candidates, key=lambda p: (p.product_type == "inapp",
                      utc(p.expires_at) if p.expires_at else datetime.max.replace(tzinfo=UTC)))
+        self._active_user(user_id)
+        record = self._owned(record.token_sha256, user_id, lock=True)
+        if not (record.active and record.acknowledged and record.checked_at and
+                utc(record.checked_at) + LEASE > now and
+                (record.product_type == "inapp" or (record.expires_at and utc(record.expires_at) > now))):
+            self.db.commit()
+            return {"user_id": user_id, "verified": True, "ad_free": False, "product_id": None,
+                    "expires_at": None, "cache_until": iso(now + LEASE)}
         until = min(now + LEASE, utc(record.checked_at) + LEASE,
                     utc(record.expires_at) if record.expires_at else now + LEASE)
-        return {"user_id": user_id, "verified": True, "ad_free": True,
+        result = {"user_id": user_id, "verified": True, "ad_free": True,
                 "product_id": record.product_id, "expires_at": iso(record.expires_at), "cache_until": iso(until)}
+        self.db.commit()
+        return result
 
     def reconcile_notification(self, token: str, product_type: str) -> None:
         record = self.db.get(BillingPurchase, token_hash(token))
@@ -243,7 +292,10 @@ class BillingService:
         if user is None:
             return
         try:
-            self._accept(account.user_id, token, purchase)
+            # The initial lookup only discovers the account. Read current state
+            # again under its lock before writing or acknowledging a new receipt.
+            self._accept(account.user_id, token,
+                         self._fetch_for_user(account.user_id, product_id, product_type, token))
         except BillingError as error:
             if error.code != "purchase_pending":
                 raise
@@ -253,7 +305,7 @@ class BillingService:
         if not isinstance(token, str) or not token:
             raise BillingError("invalid_notification", 400)
         record = self.db.get(BillingPurchase, token_hash(token))
-        if record is None:
+        if record is None or record.user_id == DELETED_BILLING_OWNER:
             return
         if record.product_type == "subs":
             # A refund of an old renewal shares its token with later renewals. Current Play state wins.
@@ -269,8 +321,45 @@ class BillingService:
             quantity = event.get("voidedQuantity", 1)
             if quantity != 1:
                 raise BillingError("invalid_notification", 400)
-            record.active, record.revoked_at, record.checked_at = False, utc(self.now()), utc(self.now())
-            self.db.commit()
+            if record is not None and record.user_id != DELETED_BILLING_OWNER:
+                self._mark_inactive(record.user_id, record.token_sha256, revoked=True)
+
+    def retry_unacknowledged(self, limit=100) -> dict:
+        # Bound each maintenance cycle and isolate failures so one receipt cannot
+        # starve acknowledgement of unrelated purchases.
+        records = (self.db.query(BillingPurchase).join(User, User.user_id == BillingPurchase.user_id)
+                   .filter(User.is_active.is_(True), BillingPurchase.acknowledged.is_(False),
+                           BillingPurchase.revoked_at.is_(None), BillingPurchase.superseded_by_hash.is_(None),
+                           BillingPurchase.token_encrypted != "",
+                           or_(and_(BillingPurchase.product_type == "subs",
+                                    BillingPurchase.product_id.in_(["ad_free_monthly", "ad_free_yearly"]),
+                                    BillingPurchase.expires_at > utc(self.now())),
+                               and_(BillingPurchase.product_type == "inapp",
+                                    BillingPurchase.product_id == "ad_free_lifetime",
+                                    BillingPurchase.expires_at.is_(None))))
+                   .order_by(BillingPurchase.checked_at, BillingPurchase.token_sha256).limit(limit).all())
+        digests = [record.token_sha256 for record in records]
+        self.db.rollback()
+        checked, failed = 0, 0
+        for digest in digests:
+            owner = None
+            try:
+                record = self.db.get(BillingPurchase, digest)
+                if record is not None:
+                    owner = record.user_id
+                    self._reconcile(record)
+                    checked += 1
+            except Exception:
+                self.db.rollback()
+                failed += 1
+                # Move a failed receipt to the back of the bounded retry queue.
+                # It still cannot grant access because active is false.
+                if owner and owner != DELETED_BILLING_OWNER:
+                    try:
+                        self._mark_inactive(owner, digest)
+                    except Exception:
+                        self.db.rollback()
+        return {"checked": checked, "failed": failed}
 
     def sync_voided(self) -> int:
         now = utc(self.now())
