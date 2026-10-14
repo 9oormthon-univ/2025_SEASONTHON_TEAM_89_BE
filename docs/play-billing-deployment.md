@@ -32,7 +32,7 @@ Google의 obfuscated account ID를 앱과 같은 `SHA-256(인증된 user_id)`로
 
 운영자의 실제 서버 경로/실행 사용자/가상환경/재시작 방법을 먼저 확인한다. 이 저장소에는 실제 MySQL·JWT·Kakao 설정이나 서버 접속 키가 없다. 기존 서버 설정을 재사용하고 새 테스트 사용자나 개발용 유료 플래그를 운영 DB에 만들지 않는다.
 
-서버에 다음 설정을 비밀 관리 방식으로 넣는다. 비밀 파일은 저장소 밖에 두고 서버 실행 사용자만 읽을 수 있도록 제한한다. 값은 채팅, 커밋, 로그에 넣지 않는다.
+서버에 다음 설정을 비밀 관리 방식으로 넣는다. 현재 서버의 접근 범위에 맞춰 비밀 파일은 `/home/ajb/9oormthon/backend/.billing-secrets/`에 보관한다. 이 디렉터리는 `.gitignore`의 `/.billing-secrets/`로 Git에서 제외하며, 디렉터리 권한은 `700`, 비밀 파일 권한은 `600`으로 서버 실행 사용자만 읽을 수 있도록 제한한다. 값은 채팅, 커밋, 로그에 넣지 않는다.
 
 | 설정 | 의미 |
 | --- | --- |
@@ -47,12 +47,25 @@ Google Cloud에서 Android Publisher API와 해당 앱의 Play Console 서비스
 
 Google Cloud 프로젝트에서 Google Play Developer API를 활성화하고, Play Console의 사용자 및 권한에서 구매 검증 서비스 계정에 해당 앱의 금융 데이터·주문 조회 및 주문·구독 관리 권한을 부여한다. 개발자 계정 자체를 Cloud 프로젝트에 연결하는 예전 절차는 더 이상 필요하지 않다. [공식 API 설정 안내](https://developers.google.com/android-publisher/getting_started).
 
-기존 서버 루트의 `.env`가 로드되므로 위 결제 환경변수는 여기에 추가하거나 서버 프로세스의 환경으로 전달할 수 있다. 구매 검증용 JSON은 Firebase 알림 설정만으로 자동 지정되지 않으며, 실제 Play 권한을 가진 파일을 `GOOGLE_PLAY_SERVICE_ACCOUNT_FILE`에 별도로 지정한다. `GOOGLE_PLAY_TOKEN_KEY_FILE`은 새 구매 토큰 저장을 위한 Fernet 암호화 키 파일이다. 이미 영수증이 저장된 서버에서는 기존 복호화 키를 보존해야 한다. RTDN 값은 실제 설정한 인증된 Pub/Sub push의 audience·서비스 계정·구독 리소스와 일치해야 한다.
+기존 서버 루트의 `/home/ajb/9oormthon/backend/.env`가 로드되므로 위 결제 환경변수는 여기에 추가하거나 서버 프로세스의 환경으로 전달할 수 있다. 기존 MySQL·JWT 등 다른 설정을 보존한다. 결제 변수가 이미 있다면 그 줄의 경로를 수정하고, 같은 변수 이름을 중복 추가하지 않는다. 구매 검증용 JSON은 Firebase 알림 설정만으로 자동 지정되지 않으며, 실제 Play 권한을 가진 파일을 `GOOGLE_PLAY_SERVICE_ACCOUNT_FILE`에 별도로 지정한다. `GOOGLE_PLAY_TOKEN_KEY_FILE`은 새 구매 토큰 저장을 위한 Fernet 암호화 키 파일이다. 이미 영수증이 저장된 서버에서는 기존 복호화 키를 보존해야 한다. RTDN 값은 실제 설정한 인증된 Pub/Sub push의 audience·서비스 계정·구독 리소스와 일치해야 한다.
 
 ### 첫 설정
 
-1. 기존 Google 서비스 계정 JSON이 있다면 그 계정의 이메일과 Cloud 프로젝트를 확인한다. Play Console에서 해당 앱의 구매 검증 권한을 별도로 부여해야 한다. JSON 파일은 서버의 비밀 파일 경로에 보관한다.
-2. 아래 명령은 현재 실행 사용자의 `~/.config/weheome-billing/purchase-token.key`를 새로 만든다. 기존 파일은 덮어쓰지 않고 키 원문을 출력하지 않는다. 서버 실행 사용자가 이 파일을 읽을 수 있어야 한다.
+1. 기존 Google 서비스 계정 JSON이 있다면 그 계정의 이메일과 Cloud 프로젝트를 확인한다. Play Console에서 해당 앱의 구매 검증 권한을 별도로 부여해야 한다. 이 변경을 서버에 반영해 `.billing-secrets/`의 Git 제외 규칙을 먼저 적용하고, 디렉터리를 준비한다.
+
+```bash
+cd /home/ajb/9oormthon/backend
+mkdir -p .billing-secrets
+chmod 700 .billing-secrets
+```
+
+JSON 파일을 `/home/ajb/9oormthon/backend/.billing-secrets/play-service-account.json`에 저장한 뒤 파일 권한을 제한한다.
+
+```bash
+chmod 600 .billing-secrets/play-service-account.json
+```
+
+2. 아래 명령은 `/home/ajb/9oormthon/backend/.billing-secrets/purchase-token.key`를 새로 만든다. 기존 파일은 덮어쓰지 않고 키 원문을 출력하지 않는다. 서버 실행 사용자와 기존 가상환경에서 실행하며, 그 사용자가 이 파일을 읽을 수 있어야 한다.
 
 ```bash
 python - <<'PY'
@@ -60,8 +73,9 @@ import os
 from pathlib import Path
 from cryptography.fernet import Fernet
 
-directory = Path.home() / ".config" / "weheome-billing"
+directory = Path("/home/ajb/9oormthon/backend/.billing-secrets")
 directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+directory.chmod(0o700)
 filename = directory / "purchase-token.key"
 try:
     fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -75,12 +89,17 @@ PY
 ```
 
 3. Google Cloud에서 RTDN topic과 인증된 push subscription을 구성한다. endpoint와 audience는 `https://wiheome.ajb.kr/api/billing/google-play/rtdn`으로 맞출 수 있다. push 인증에 실제 지정한 서비스 계정 이메일과 subscription 리소스 이름을 기록한다. Google Play 알림 발행 계정에 topic의 Pub/Sub Publisher 권한을 부여하고 Play Console의 수익 창출 설정에서 해당 topic을 연결한다. [RTDN 설정](https://developer.android.com/google/play/billing/getting-ready#configure-rtdn), [인증된 push 설정](https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions).
-4. 다음은 `.env` 형식 예시다. `PROJECT_ID`, 서비스 계정 이메일, 서버 파일 경로와 subscription 이름은 실제 설정으로 바꾼다. `/home/ajb`는 해당 개발 서버의 사용자 홈 예시이며, 서버 실행 사용자나 저장 경로가 다르면 실제 절대 경로를 사용한다.
+4. `/home/ajb/9oormthon/backend/.env`에서 다음 세 항목을 설정한다. 기존 항목이 있다면 값을 수정하고, 없는 항목만 추가한다. 판매는 `false`로 유지한다. 서버 실행 사용자나 저장 경로가 다르면 실제 절대 경로를 사용한다.
 
 ```dotenv
 GOOGLE_PLAY_BILLING_ENABLED=false
-GOOGLE_PLAY_SERVICE_ACCOUNT_FILE=/home/ajb/.config/weheome-billing/play-service-account.json
-GOOGLE_PLAY_TOKEN_KEY_FILE=/home/ajb/.config/weheome-billing/purchase-token.key
+GOOGLE_PLAY_SERVICE_ACCOUNT_FILE=/home/ajb/9oormthon/backend/.billing-secrets/play-service-account.json
+GOOGLE_PLAY_TOKEN_KEY_FILE=/home/ajb/9oormthon/backend/.billing-secrets/purchase-token.key
+```
+
+RTDN의 topic·인증된 push subscription·권한·Play 알림 연결을 실제로 구성한 뒤 아래 세 항목을 추가한다. `PROJECT_ID`, push 서비스 계정 이메일과 subscription 이름은 형식을 보여 주는 예시다. **예시 값을 그대로 복사하면 실제 RTDN 인증이 실패한다.** 아직 RTDN을 구성하지 않았다면 임의 값을 넣지 않는다. 이 경우 `check`가 아래 변수들을 `missing_env`로 표시하는 것이 정상이다. `check`의 설정 형식 검사가 통과해도 실제 알림 전달·인증이 검증된 것은 아니다.
+
+```dotenv
 GOOGLE_PLAY_RTDN_AUDIENCE=https://wiheome.ajb.kr/api/billing/google-play/rtdn
 GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL=push-account@PROJECT_ID.iam.gserviceaccount.com
 GOOGLE_PLAY_RTDN_SUBSCRIPTION=projects/PROJECT_ID/subscriptions/weheome-billing-rtdn
